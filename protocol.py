@@ -21,6 +21,7 @@ def send_message(sock, name: str, message: str):
     sock.sendall(payload)
 
 
+
 def recv_exact(sock, n):
     # Create an empty bytes object.
     # This will accumulate data until we have exactly n bytes.
@@ -48,16 +49,19 @@ def recv_exact(sock, n):
     # At this point, data is EXACTLY n bytes long
     return data
 
-
+# In over-simplified terms, the message recieved will be an array of bytes
+# The message will have 2 "parts"
+# Authors name, and the content of message
+# If the message was "Oisin: Hello everyone"
+# It would be "5, Oisin, 14, Hello everyone"
+# 5 is length of message author "oisin"
+# 14 is length of message "Hello eveyone"
 def recv_message(sock):
-    # ---- STEP 1: READ NAME LENGTH ----
-    # Read exactly 2 bytes from the stream.
-    # These bytes represent the name length.
+
+    # This will find the length of the bytes for message
     name_len_bytes = recv_exact(sock, 2)
 
-    # Convert the 2 bytes into a Python integer.
-    # struct.unpack ALWAYS returns a tuple.
-    # [0] extracts the single integer value.
+    
     name_len = struct.unpack("!H", name_len_bytes)[0]
 
     # ---- STEP 2: READ NAME ----
