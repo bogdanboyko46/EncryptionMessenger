@@ -2,7 +2,8 @@
 import struct
 
 # Parameters are socket (tcp socket), name (clientA / oisin's pc), the message being sent("hello world")
-def send_message(sock, name: str, message: str):
+def send_message(sock, org_name: str, message: str):
+    name = f"Message recieved from {org_name}: "
     # encodes name to byte object
     name_bytes = name.encode("utf-8")
     # encodes message to byte object
