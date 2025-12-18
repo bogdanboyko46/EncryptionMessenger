@@ -11,6 +11,13 @@ PORT = 5000        # Port clients will connect to
 clients = dict()       # List of connected client sockets
 lock = threading.Lock()
 
+clients: dict[str, socket.socket] = dict()  # maps client names to their sockets
+socket_to_name: dict[socket.socket, str] = dict()  # maps sockets to client names
+sender_choice: dict[socket.socket, str] = dict()  # maps sockets to the name of the client they want to connect to
+# protect shared data
+
+lock = threading.Lock()
+
 # Every client will thats connected to the relay server will have an instance of this (the instance is hosted here ofc)
 def handle_client(conn, addr, name):
     # prints the ip address of the client that connects to the relay
@@ -18,39 +25,19 @@ def handle_client(conn, addr, name):
 
     # if 2 clients try connect at same time the lock makes sure each action happens 1 after the other
     with lock:
+
         if clients[name]:
             # name already taken
             conn.sendall(b"Name already taken. Disconnecting.")
             conn.close()
             return
+            
+
+    while True:
+        msg = recv_message(conn)
+
         
-        # maps to name of client to instance of socket
-        clients[name] = conn
-
-    try:
-        # waiting to recieve bytes from the client
-        while True:
-            # The instance will pause here and wait to recieve data from the client
-            # The code wont go past this line until its recieved the data from the conn.recv() call
-            data = conn.recv(4096)
-            # basically just checks if the client disconnected
-            if not data:
-                break  # client disconnected
-
-            # Relay the data to all other clients
-            with lock:
-                for name in clients:
-                    if clients[name] != conn:
-                        clients[name].sendall(data)
-
-    except Exception as e:
-        print(f"[!] Error with {addr}: {e}")
-
-    finally:
-        print(f"[-] Disconnected: {addr}")
-        with lock:
-            del clients[name]
-        conn.close()
+            
 
 
 def main():
@@ -83,31 +70,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-clients: dict[str, socket.socket] = dict()  # List of connected client sockets
-# sockets mapped to names
-socket_to_name: dict[socket.socket, str] = dict()
-# receiver_socket -> allowed sender usernames
-allowed_senders: dict[socket.socket, set[str]] = dict()
-# protect shared data
-lock = threading.Lock()
-
-def safe_send(sock: socket.socket, message: dict):
-    try:
-        send_message(sock, message)
-    except Exception as e:
-        print(f"[!] Error sending to {socket_to_name.get(sock, 'unknown')}: {e}")
-
-
-def disconnect(sock: socket.socket):
-    with lock:
-        name = socket_to_name.get(sock, "unknown")
-        
-        allowed_senders.pop(sock, None)
-
-        if name is not None and name in clients:
-            del clients[name]
     
-    try:
-        sock.close()
-    except Exception as e:
-        print(f"[!] Error closing socket for {name}: {e}")
