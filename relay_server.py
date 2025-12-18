@@ -3,21 +3,29 @@ import socket
 # we need threading to stop multiple clients using same function anyway
 import threading
 
+from protocol import send_message, recv_message
+
 HOST = "0.0.0.0"   # Listen on all network interfaces
 PORT = 5000        # Port clients will connect to
 
-clients = []       # List of connected client sockets
+clients = dict()       # List of connected client sockets
 lock = threading.Lock()
 
 # Every client will thats connected to the relay server will have an instance of this (the instance is hosted here ofc)
-def handle_client(conn, addr):
+def handle_client(conn, addr, name):
     # prints the ip address of the client that connects to the relay
     print(f"[+] Connected: {addr}")
 
     # if 2 clients try connect at same time the lock makes sure each action happens 1 after the other
     with lock:
-        # adds socket to client list
-        clients.append(conn)
+        if clients[name]:
+            # name already taken
+            conn.sendall(b"Name already taken. Disconnecting.")
+            conn.close()
+            return
+        
+        # maps to name of client to instance of socket
+        clients[name] = conn
 
     try:
         # waiting to recieve bytes from the client
@@ -31,9 +39,9 @@ def handle_client(conn, addr):
 
             # Relay the data to all other clients
             with lock:
-                for client in clients:
-                    if client != conn:
-                        client.sendall(data)
+                for name in clients:
+                    if clients[name] != conn:
+                        clients[name].sendall(data)
 
     except Exception as e:
         print(f"[!] Error with {addr}: {e}")
@@ -41,7 +49,7 @@ def handle_client(conn, addr):
     finally:
         print(f"[-] Disconnected: {addr}")
         with lock:
-            clients.remove(conn)
+            del clients[name]
         conn.close()
 
 
@@ -61,11 +69,11 @@ def main():
     # Loop running forever waiting for clients
     while True:
         # Code pauses here until client tries connecting
-        conn, addr = server.accept()
+        conn, addr, name = server.accept()
         # Creates a new thread that will run the handle_client function
         thread = threading.Thread(
             target=handle_client,
-            args=(conn, addr),
+            args=(conn, addr, name),
             # daemon means it will exit automatically
             daemon=True
         )
@@ -74,3 +82,32 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+clients: dict[str, socket.socket] = dict()  # List of connected client sockets
+# sockets mapped to names
+socket_to_name: dict[socket.socket, str] = dict()
+# receiver_socket -> allowed sender usernames
+allowed_senders: dict[socket.socket, set[str]] = dict()
+# protect shared data
+lock = threading.Lock()
+
+def safe_send(sock: socket.socket, message: dict):
+    try:
+        send_message(sock, message)
+    except Exception as e:
+        print(f"[!] Error sending to {socket_to_name.get(sock, 'unknown')}: {e}")
+
+
+def disconnect(sock: socket.socket):
+    with lock:
+        name = socket_to_name.get(sock, "unknown")
+        
+        allowed_senders.pop(sock, None)
+
+        if name is not None and name in clients:
+            del clients[name]
+    
+    try:
+        sock.close()
+    except Exception as e:
+        print(f"[!] Error closing socket for {name}: {e}")

@@ -1,85 +1,41 @@
-# protocol.py
-import struct
+import json, struct
 
-# Parameters are socket (tcp socket), name (clientA / oisin's pc), the message being sent("hello world")
-def send_message(sock, org_name: str, message: str):
-    name = f"{org_name}: "
-    # encodes name to byte object
-    name_bytes = name.encode("utf-8")
-    # encodes message to byte object
-    msg_bytes = message.encode("utf-8")
+def send_message(sock, obj: dict):
+    # converts dict into JSON string then encodes to bytes
+    data = json.dumps(obj).encode("utf-8")
+    # creates a 4 byte header with length of data and sends it with the data
+    sock.sendall(struct.pack("!I", len(data)) + data)
 
-
-    # struct.pack converts numbers into readable bytes, the "!H" represents it will be 2 bytes long
-    payload = (
-        struct.pack("!H", len(name_bytes)) +
-        name_bytes +
-        # "!I" represents it will be 4 bytes long
-        struct.pack("!I", len(msg_bytes)) +
-        msg_bytes
-    )
-    # Sends out message from the socket
-    sock.sendall(payload)
-
-
-
-def recv_exact(sock, n):
-    # Create an empty bytes object.
-    # This will accumulate data until we have exactly n bytes.
-    data = b""
-
-    # Keep looping until we have read n bytes in total
-    while len(data) < n:
-
-        # Ask the OS for the remaining number of bytes.
-        # IMPORTANT:
-        # - recv() may return fewer bytes than requested
-        # - recv() blocks here until at least 1 byte arrives
-        chunk = sock.recv(n - len(data))
-
-        # If recv() returns b"":
-        # - the peer closed the connection
-        # - continuing would corrupt the protocol
+# Helper function to receive an exact number of bytes
+def recv_exact(sock, n: int) -> bytes:
+    # stores received byte chunks
+    chunks = []
+    got = 0
+    # keeps receiving until n bytes are received
+    while got < n:
+        chunk = sock.recv(n - got)
         if not chunk:
-            raise ConnectionError("Disconnected")
+            return b""
+        chunks.append(chunk)
+        got += len(chunk)
+    return b"".join(chunks)
 
-        # Append the newly received bytes
-        # This is what "moves forward" in the TCP stream
-        data += chunk
-
-    # At this point, data is EXACTLY n bytes long
-    return data
-
+# Receives a message and returns the decoded dict
 def recv_message(sock):
+    # reads the 4 byte header first
+    header = recv_exact(sock, 4)
 
-    # This will find the length of the bytes for message
-    name_len_bytes = recv_exact(sock, 2)
-
+    if not header:
+        return None
     
-    name_len = struct.unpack("!H", name_len_bytes)[0]
+    # converts 4 byte back into an int, then stores in tuple
+    # that is why the comma is there
+    (length,) = struct.unpack("!I", header)
 
-    # ---- STEP 2: READ NAME ----
-    # Now that we know the name length,
-    # read exactly that many bytes.
-    name_bytes = recv_exact(sock, name_len)
-
-    # Convert bytes to string
-    name = name_bytes.decode("utf-8")
-
-    # READ MESSAGE LENGTH
-    # Read exactly 4 bytes for the message length.
-    msg_len_bytes = recv_exact(sock, 4)
-
-    # Convert those 4 bytes into a Python integer.
-    msg_len = struct.unpack("!I", msg_len_bytes)[0]
-
-    # READ MESSAGE
-    # Read exactly msg_len bytes from the stream.
-    msg_bytes = recv_exact(sock, msg_len)
-
-    # Convert bytes to string
-    msg = msg_bytes.decode("utf-8")
-
-    # Return one logical message
-    return name, msg
-
+    # now reads the actual data based on length from header
+    body = recv_exact(sock, length)
+    if not body:
+        return None
+    
+    # decodes bytes back into dict and returns it
+    return json.loads(body.decode("utf-8"))
