@@ -17,10 +17,10 @@ def handle_client(conn, addr):
     print(f"[+] Connected: {addr}")
 
     msg = recv_message(conn)
-    # if 2 clients try connect at same time the lock makes sure each action happens 1 after the other
     
     name = msg.get("name").strip()
     
+    # if 2 clients try connect at same time the lock makes sure each action happens 1 after the other
     with lock:
         
         # checks if the name is already taken, gives an "ERROR" type message
