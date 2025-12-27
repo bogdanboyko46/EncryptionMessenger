@@ -13,8 +13,9 @@ lock = threading.Lock()
 chat_rooms = dict()  # Dictionary to hold chat room instances, maps room name -> Room instance
 
 def create_room(room_name, owner):
-    Room = chat_room(room_name, socket, owner)
-    chat_rooms[room_name] = Room
+    # create a new chat_room obj and assign respective room name to room object
+    temp_room = chat_room(room_name, owner)
+    chat_rooms[room_name] = temp_room
 
 # Every client will thats connected to the relay server will have an instance of this (the instance is hosted here ofc)
 def handle_client(conn, addr):
@@ -24,7 +25,6 @@ def handle_client(conn, addr):
     msg = recv_message(conn)
 
     name = None
-    room = None
 
     # recieves the name from the client
     if isinstance(msg, dict) and msg.get("TYPE") == "SEND":
@@ -54,6 +54,7 @@ def handle_client(conn, addr):
         # dict with room instances -> users
         mapped_rooms = dict()
 
+        # slightly redundant - may be initialized and appended to as class variable, but necessary for user to choose between rooms / create one
         for chat_room_name, chat_room_instance in chat_rooms.items():
             mapped_rooms[chat_room_name] = chat_room_instance.list_users()
 
@@ -62,22 +63,28 @@ def handle_client(conn, addr):
     # Now waits for the client to either create or join a room
 
     msg = recv_message(conn)
+    room = None
 
     # handles whether the client wants to join or create a room
     if msg and msg.get("TYPE") == "CREATE_ROOM":
 
-        print(f"THERE ARE {len(chat_rooms)} on the server!")
+        for c_name, c_instance in chat_rooms.items():
+            print(f"ROOM NAME: {c_name}, PEOPLE INSIDE ROOM: {c_instance.list_users()}")
+
         create_room(msg.get("ROOM_NAME"), name)
 
     elif msg and msg.get("TYPE") == "JOIN_ROOM":
-
+        
+        # if user intends to join a room, it utilizes the add_user() function and adds the respective user
         room_name = msg.get("ROOM_NAME")
         Room = chat_rooms.get(room_name)
         if Room:
             Room.add_user(name)
 
     room = msg.get("ROOM_NAME") if msg else None
-    send_message(conn, {"TYPE": "JOINED", "MESSAGE": f"Welcome to {room}, {name}!"})
+    # broadcasts user to room regardless if they created it or joined
+    chat_rooms[room].broadcast(clients, name)
+    # result of [Broadcast] Welcome to the...
 
     try:
         while True:
@@ -89,10 +96,10 @@ def handle_client(conn, addr):
 
             if msg.get("TYPE") == "SEND":
                 
-                room_instance = chat_rooms.get(msg.get("ROOM_NAME"))
+                room_instance = chat_rooms.get(msg.get("ROOM"))
 
                 if room_instance:
-                    room_instance.send_message(name, msg.get("MESSAGE"), clients)
+                    room_instance.send_message("RECIEVE", msg.get("MESSAGE"), clients, from_user=name)
 
     except Exception as e:
         print(f"Error: {e}")

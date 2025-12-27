@@ -2,16 +2,20 @@ import socket
 import threading
 from protocol import recv_message, send_message
 
+# create room if user intends to, join room if there is a room and user intends to join a room
+# creates a room, communicates the room name, room owner ("only user"), and type "CREATE_ROOM" all in a dict
 def create_room(socket, room_name, owner):
     send_message(socket, {"TYPE": "CREATE_ROOM", "ROOM_NAME": room_name, "OWNER": owner})
 
-def join_room(socket, room_name, rooms_dict):
+# sends msg to socket, relay_server captures that msg and executes command to join a current room
+def join_room(socket, room_name):
     send_message(socket, {"TYPE": "JOIN_ROOM", "ROOM_NAME": room_name})
 
 def reciever_loop(s: socket.socket):
     while True:
         msg = recv_message(s)
 
+        # recieves msg from socket, could be from chat_room class or from a user inside of the same room
         if msg is None:
             print("Server disconnected. Exiting...")
             break
@@ -21,7 +25,7 @@ def reciever_loop(s: socket.socket):
         elif msg.get("TYPE") == "REGISTERED":
             print(f"[Server]: {msg.get("MESSAGE")}")
         elif msg.get("TYPE") == "BROADCAST":
-            print(f"[Broadcast] {msg.get("MESSAGE")}")
+            print(f"[Broadcast]: {msg.get("MESSAGE")}")
         else:
             print(f"Received unknown message type: {msg.get("TYPE")} - MSG: {msg.get("MESSAGE")}")
 
@@ -62,23 +66,24 @@ def main():
 
             while chat_room_name not in chat_rooms.keys():
                 chat_room_name = input("Enter the name of the chat room to join: ")
-            join_room(s, chat_room_name, chat_rooms)
+            join_room(s, chat_room_name)
             print("\n")
 
         else:
             chat_room_name = input("Enter a name for the new chat room: ")
-            create_room(s, chat_room_name, chat_room_name)
+            create_room(s, chat_room_name, user)
             print("\n")
     else:
         print("No chat rooms available. Please create one on the server first.")
         chat_room_name = input("Enter a name for the new chat room: ")
 
-        create_room(s, chat_room_name, chat_room_name)
+        create_room(s, chat_room_name, user)
         print("\n")
 
+    # msg recieved and captured is essentially the "confirmation" that the user had joined the room, respective room object's user array will be updated
     msg = recv_message(s)
-    if msg and msg.get("TYPE") == "JOINED":
-        print(f"[Room]: {msg.get('MESSAGE')}\n")
+    if msg and msg.get("TYPE") == "BROADCAST":
+        print(f"[Broadcast]: {msg.get('MESSAGE')}\n")
 
     # Start the receiver thread
     t = threading.Thread(target=reciever_loop, args=(s,), daemon=True)
@@ -93,7 +98,7 @@ def main():
             continue
         if text in ("exit", "quit"):
             break
-
+        
         send_message(s, {"ROOM": chat_room_name, "TYPE": "SEND", "FROM": user, "MESSAGE": text})
     
     try:
