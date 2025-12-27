@@ -26,5 +26,4 @@ class chat_room:
     def send_message(self, from_user, message, sockets_dict):
         for user in self.users:
             if user != from_user:
-                print(f"SENT MESSAGE TO {user}")
                 send_message(sockets_dict[user], {"TYPE": "RECIEVE", "FROM": from_user, "MESSAGE": message})

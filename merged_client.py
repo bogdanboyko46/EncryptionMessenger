@@ -94,7 +94,7 @@ def main():
         if text in ("exit", "quit"):
             break
 
-        send_message(s, {"TYPE": "SEND", "FROM": user, "MESSAGE": text})
+        send_message(s, {"ROOM": chat_room_name, "TYPE": "SEND", "FROM": user, "MESSAGE": text})
     
     try:
         s.close()

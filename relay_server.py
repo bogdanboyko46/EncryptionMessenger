@@ -12,9 +12,9 @@ clients = dict()      # List of connected client sockets
 lock = threading.Lock()
 chat_rooms = dict()  # Dictionary to hold chat room instances, maps room name -> Room instance
 
-def create_room(socket, room_name, owner, rooms_dict):
+def create_room(room_name, owner):
     Room = chat_room(room_name, socket, owner)
-    rooms_dict[room_name] = Room
+    chat_rooms[room_name] = Room
 
 # Every client will thats connected to the relay server will have an instance of this (the instance is hosted here ofc)
 def handle_client(conn, addr):
@@ -66,8 +66,8 @@ def handle_client(conn, addr):
     # handles whether the client wants to join or create a room
     if msg and msg.get("TYPE") == "CREATE_ROOM":
 
-        Room = chat_room(msg.get("ROOM_NAME"), conn, name)
-        chat_rooms[msg.get("ROOM_NAME")] = Room
+        print(f"THERE ARE {len(chat_rooms)} on the server!")
+        create_room(msg.get("ROOM_NAME"), name)
 
     elif msg and msg.get("TYPE") == "JOIN_ROOM":
 
@@ -89,7 +89,7 @@ def handle_client(conn, addr):
 
             if msg.get("TYPE") == "SEND":
                 
-                room_instance = chat_rooms.get(room)
+                room_instance = chat_rooms.get(msg.get("ROOM_NAME"))
 
                 if room_instance:
                     room_instance.send_message(name, msg.get("MESSAGE"), clients)
