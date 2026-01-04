@@ -94,7 +94,7 @@ class chat_room:
 
                         # send message to client before removing from room to process the message
                         self.users.remove(user)
-                        send_message(clients[user].get_socket(), {"TYPE": "REJOIN", "CHAT_ROOMS": chat_rooms, "MESSAGE": "You have been removed from the room by an admin."})
+                        send_message(clients[user].get_socket(), {"TYPE": "REJOIN", "DISCONNECT_TYPE": "BAN", "CHAT_ROOMS": chat_rooms, "MESSAGE": "You have been removed from the room by an admin."})
 
                         # message to the rest of the users that the user has been removed
                         self.send_message("BROADCAST", f"{user} has been removed from the room by an admin.", clients)
@@ -115,7 +115,7 @@ class chat_room:
                         # send message to client before removing from room to process the message
                         self.ban_list.append(user)
                         self.users.remove(user)
-                        send_message(clients[user].get_socket(), {"TYPE": "REJOIN", "CHAT_ROOMS": chat_rooms, "MESSAGE": "You have been banned from the room by an admin."})
+                        send_message(clients[user].get_socket(), {"TYPE": "REJOIN", "DISCONNECT_TYPE": "BAN", "CHAT_ROOMS": chat_rooms, "MESSAGE": "You have been banned from the room by an admin."})
 
                         # message to the rest of the users that the user has been banned
                         self.send_message("BROADCAST", f"{user} has been banned from the room by an admin.", clients)

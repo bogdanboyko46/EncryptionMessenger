@@ -53,6 +53,8 @@ def assign_room(conn, name, msg):
 
     print(f"[DEBUG] {name} has joined room: {room_name}")
     chat_rooms[room_name].broadcast(clients, name)
+
+    print(f"IS {room_name} in chat rooms: {room_name in chat_rooms}")
     send_message(conn, {"TYPE": "CONNECTED", "ROOM_NAME": room_name})
 
     return room_name
@@ -98,9 +100,7 @@ def handle_client(conn, addr):
         while True:
            
             # waits for message in the main loop
-            print(f"[DEBUG] Waiting for message from {name}")
             msg = recv_message(conn)
-            print(f"MESSAGE RECEIVED FROM {name}: {msg}")
 
             if msg is None:
                 break
@@ -108,16 +108,19 @@ def handle_client(conn, addr):
             mType = msg.get("TYPE")
 
             if mType in ("CREATE_ROOM", "JOIN_ROOM"):
-                print("CREATING ROOM!!")
                 chat_room_name = assign_room(conn, name, msg)
+                continue
 
             match mType:
                 case "SEND":
                     # operation for a user sending a message to the room they are in
                     message = msg.get("MESSAGE")
-                    room_name = msg.get("ROOM_NAME")
-                    if room_name in chat_rooms:
-                        chat_rooms[room_name].send_message("RECEIVE", message, clients, from_user=name, chat_rooms=chat_rooms)
+
+                    print(f"THE MESSAGE IS {message}")
+
+                    if chat_room_name in chat_rooms:
+                        print("SENDING NOW!")
+                        chat_rooms[chat_room_name].send_message("RECEIVE", message, clients, from_user=name, chat_rooms=chat_rooms)
 
     except Exception as e:
         print(f"Error: {e}")

@@ -2,6 +2,7 @@
 # It refers to the bytes sent between clients & relay_server, these messages for most part contain 
 # socket & a map of instructions
 
+import time
 import socket
 import threading
 import queue
@@ -13,6 +14,7 @@ state = {
     "ROOM": None,
     "USER": None,
 }
+
 
 inbox = queue.Queue()   # messages from server (dicts)
 outbox = queue.Queue()  # messages to be sent to relay server (dicts)
@@ -55,10 +57,11 @@ def room_assignment(chat_rooms):
 
     # user intends / needs to make a new room
     if room_assignment_action(chat_rooms):
-        
+ 
         # gathers the user's new room name
         prompts_box.put({"PROMPT": "Please enter the room of the new chat room: "})
         room_name = user_input_box.get()
+
         print()
 
         # asks the user if they'd like to create a password
@@ -123,33 +126,56 @@ def outbox_thread(s):
 def input_helper(prompt_dict={}):
 
     user_inp = None
-    prompt = prompt_dict.get("PROMPT") if prompt_dict else "> "
 
-    # extracts the boundaries of the prompt, (the response must be in the tuple passed as "BOUNDARIES" hence boundaries)
+    prompt = ""
     boundaries = tuple()
 
-    if prompt_dict.get("BOUNDARIES") is not None:
-        boundaries = prompt_dict.get("BOUNDARIES")
+    # in the case of a prompt that the user needs to answer
+    if prompt_dict:
+
+        prompt = prompt_dict.get("PROMPT")
+        
+        if prompt_dict.get("BOUNDARIES"):
+            boundaries = prompt_dict.get("BOUNDARIES")
+
+        # else, we know that it is a user trying to send a message to the room
+    
+    while (
+        user_inp is None or
+        boundaries and user_inp not in boundaries
+    ):
+        user_inp = input(prompt).strip()
 
     # run code in while loop if user_inp is null, empty, or is NOT in a tuple of accepted inputs IF boundaries WITH contents is passed
-    while user_inp is None or not user_inp or boundaries and user_inp not in boundaries:
-        user_inp = input(prompt).strip()
-    
     return user_inp
 
 def user_input_thread():
     while state["RUNNING"]:
         
-        # if the queue has contents inside - the user is being prompted
+        # constantly runs - nothing stops this thread! user input is always being attempted
+        # prompts queue has priority over message input to room
+
         if not prompts_box.empty():
-            # get user inp
-            user_response = input_helper(prompts_box.get())
+            
+            prompt = prompts_box.get()
+            user_response = ""
+
+            while not user_response:
+                user_response = input_helper(prompt)
+
             user_input_box.put(user_response)
 
-        # otherwise, with these conditions checked, we can safely assume that the user is attempting to send a message to the relay server
+        # if the queue has contents inside - the user is being prompted
         elif state["IN_ROOM"]:
-            user_msg = input_helper()
-            user_input_box.put(user_msg)
+            
+            # get user inp
+            user_response = input_helper()
+
+            # append user message to outbox, for it to be sent to relay server
+            if user_response:
+                outbox.put({"TYPE": "SEND", "MESSAGE": user_response})
+
+        time.sleep(.15)
 
 def main():
     # Create a TCP/IP socket, connect to the VPS IP address & port
@@ -182,76 +208,67 @@ def main():
     room_assignment(server_info.get("CHAT_ROOMS"))
 
     while state["RUNNING"]:
-
-        # inbound logic - checks to see if inbox queue is empty
-        while not inbox.empty():
-            msg = inbox.get()
         
+        # inbound logic - checks to see if inbox queue is empty
+        msg = inbox.get()
+
             # gets the type of the message
-            mType = msg.get("TYPE")
+        mType = msg.get("TYPE")
 
-            match mType:
+        match mType:
             
-                # inbound messages coming from other users in the assigned room
-                case "RECEIVE":
-
-                    from_user = msg.get("FROM")
-                    user_message = msg.get("MESSAGE")
-
-                    print(f"{from_user}: {user_message}")
-
-                # broadcast messages that share important, or relevant information from the chat room
-                case "BROADCAST":
+            # message type that indicates a logic error
+            case "ERROR":
                     
-                    broadcast_message = msg.get("MESSAGE")
+                error_message = msg.get("MESSAGE")
 
-                    print(f"[BROADCAST]: {broadcast_message}\n")
+                print(f"[Error]: {error_message}")
+                state["RUNNING"] = False
+
+            # message type that disconnected a user from a room, user now needs room reassignment
+            case "REJOIN":
+                
+                 # drain anything from current inbox
+                try:
+                    inbox.get_nowait()
+                except queue.Empty:
+                    pass
+
+                print(f"\n[Server]: {msg.get("MESSAGE")}\n")
+
+                # unassign user flags
+                state["IN_ROOM"] = False
+                state["ROOM"] = None
+                
+                if msg.get("DISCONNECT_TYPE") and msg.get("DISCONNECT_TYPE") in ("REMOVE", "BAN"):
+                    print("Please hit enter to continue.\n")
+
+                room_assignment(msg.get("CHAT_ROOMS"))
+
+            case "CONNECTED":
                     
-                # message type that confirms connection to a room
-                case "CONNECTED":
+                # confirms and flags the user in a room and assigns the corresponding room name
+                room_name = msg.get("ROOM_NAME")
+                state["IN_ROOM"] = True
+                state["ROOM"] = room_name
+
+            # inbound messages coming from other users in the assigned room
+            case "RECEIVE":
+
+                from_user = msg.get("FROM")
+                user_message = msg.get("MESSAGE")
+
+                print(f"{from_user}: {user_message}")
+
+            # broadcast messages that share important, or relevant information from the chat room
+            case "BROADCAST":
                     
-                    print("CONNECTED!")
-                    # confirms and flags the user in a room and assigns the corresponding room name
-                    room_name = msg.get("ROOM_NAME")
-                    state["IN_ROOM"] = True
-                    state["ROOM"] = room_name
+                broadcast_message = msg.get("MESSAGE")
+
+                print(f"[BROADCAST]: {broadcast_message}\n")
+                    
+            # message type that confirms connection to a room
             
-                # message type that disconnected a user from a room, user now needs room reassignment
-                case "REJOIN":
-                 
-                    server_message = msg.get("MESSAGE")
-
-                    print(f"[Server]: {server_message}")
-
-                    # unassign user flags
-                    state["IN_ROOM"] = False
-                    state["ROOM"] = None
-                    
-                    # drain queue, clear old messages
-                    try:
-                        while True:
-                            user_input_box.get_nowait()
-                    except queue.Empty:
-                        pass
-
-                    chat_rooms = msg.get("CHAT_ROOMS")
-
-                    # assign user a room
-                    room_assignment(chat_rooms)
-
-                # message type that indicates a logic error
-                case "ERROR":
-                    
-                    error_message = msg.get("MESSAGE")
-
-                    print(f"[Error]: {error_message}")
-                    state["RUNNING"] = False
-            
-
-        # User message to room logic
-        user_message = user_input_box.get()
-        send_message(s, {"TYPE": "SEND", "ROOM_NAME": state["ROOM"], "MESSAGE": user_message})
-
 
 if __name__ == "__main__":
     main()
