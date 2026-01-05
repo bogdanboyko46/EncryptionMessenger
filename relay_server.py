@@ -38,7 +38,7 @@ def assign_room(conn, name, msg):
         # if user intends to join a room, it utilizes the add_user() function and adds the respective user
         
         # handles if the user is banned from the room or if the room does not exist
-        if room_name not in chat_rooms or name in chat_rooms[room_name].ban_list:
+        if name in chat_rooms[room_name].ban_list:
             send_message(conn, {"TYPE": "REJOIN", "CHAT_ROOMS": chat_rooms, "MESSAGE": "Room does not exist or you are banned from it!"})
             return None
         
@@ -84,7 +84,7 @@ def handle_client(conn, addr):
         return
 
     # send message with chat_room info
-    send_message(conn, {"CHAT_ROOMS": chat_rooms, "MESSAGE": f"Welcome to the VPS server, {name}!"})
+    send_message(conn, {"TYPE": "REGISTRATION", "CHAT_ROOMS": chat_rooms, "MESSAGE": f"Welcome to the chat room server, {name}!"})
 
     # receives msg for room assignment
     client_registration = recv_message(conn)
