@@ -38,11 +38,19 @@ def recieving_thread(s):
         
         inbox.put(msg)
 
+def _wait_outbound():
+    try:
+        contents = outbox.get(timeout=0.1)
+        if contents:
+            return contents
+    except queue.Empty:
+        return _wait_outbound()
+
 def outbox_thread(s):
     while state["RUNNING"]:
 
         # waits for contents patiently
-        contents = outbox.get()
+        contents = _wait_outbound()
 
         # invalid contents if condition passes; either null or contains nothing
         if contents is None or not contents:
