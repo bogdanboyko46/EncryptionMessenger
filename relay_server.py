@@ -55,7 +55,7 @@ def assign_room(conn, name, msg):
     chat_rooms[room_name].broadcast(clients, name)
 
     print(f"IS {room_name} in chat rooms: {room_name in chat_rooms}")
-    send_message(conn, {"TYPE": "CONNECTED", "ROOM_NAME": room_name})
+    send_message(conn, {"TYPE": "CONNECTED", "CHAT_ROOMS": chat_rooms, "ROOM_NAME": room_name})
 
     return room_name
 

@@ -15,6 +15,7 @@ state = {
     "IN_ROOM": False,
     "ROOM": None,
     "USER": None, 
+    "CHAT_ROOMS": None,
 }
 
 inbox = queue.Queue()   # messages from server (dicts)
@@ -56,12 +57,10 @@ def process_inbox(s):
     while state["RUNNING"]:
         try:
             # inbound logic - checks to see if inbox queue is empty
-            msg = inbox.get_nowait()
+            msg = inbox.get(timeout=0.1)
 
             # gets the type of the message
             mType = msg.get("TYPE")
-
-            print("RECIEVED INSIDE RUNN ", msg)
 
             match mType:
                 
@@ -70,7 +69,7 @@ def process_inbox(s):
                     # we are connected!
                     state["IN_ROOM"] = True
                     state["ROOM"] = msg.get("ROOM_NAME")
-
+                    state["CHAT_ROOMS"] = msg.get("CHAT_ROOMS")
 
                 # message type that indicates a logic error
                 case "ERROR":
@@ -85,13 +84,14 @@ def process_inbox(s):
                     
                     # drain anything from current inbox
                     try:
-                        inbox.get_nowait()
+                        inbox.get(timeout=0.1)
                     except queue.Empty:
                         pass
 
                     # unassign user flags
                     state["IN_ROOM"] = False
                     state["ROOM"] = None
+                    state["CHAT_ROOMS"] = msg.get("CHAT_ROOMS")
                     
                     # PRINT SERVER MESSAGE TO USER - PROVIDE CHAT_ROOMS
                     local.put(msg)
@@ -146,6 +146,15 @@ class ChatGUI(tk.Tk):
         frame = self.frames[scene_name]
         frame.on_show()
         frame.tkraise()
+    
+    def rejoin(self):
+        frame = self.frames["ConnectedScene"]
+
+        frame.welcome_label.config(text="Connecting...")
+        for w in frame.content_frame.winfo_children():
+            w.destroy()
+
+        self.after(100, frame.room_logic)
 
 
 class UsernameScene(ttk.Frame):
@@ -205,16 +214,16 @@ class ConnectedScene(ttk.Frame):
         self.welcome_label.config(text="Connecting...")
         for w in self.content_frame.winfo_children():
             w.destroy()
-        self.after(50, self._poll_registration)
+        self.after(100, self._poll_registration)
 
     def _poll_registration(self):
         try:
-            returned_message = local.get_nowait()
+            returned_message = local.get(timeout=0.1)
         except queue.Empty:
-            self.after(50, self._poll_registration)
+            self.after(5, self._poll_registration)
             return
         
-        self.chat_rooms = returned_message.get("CHAT_ROOMS") or {}
+        state["CHAT_ROOMS"] = returned_message.get("CHAT_ROOMS") or {}
         welcome_message = returned_message.get("MESSAGE") or "Connected."
 
         self.welcome_label.config(text=welcome_message)
@@ -227,12 +236,14 @@ class ConnectedScene(ttk.Frame):
 
     def room_logic(self):
         # room logic
-        if self.chat_rooms:
+        if state["CHAT_ROOMS"]:
             prompt = ttk.Label(
                 self.content_frame,
                 text="Would you like to create or join a room?",
                 font=("Arial", 14),
             )
+
+
             prompt.grid(row=0, column=0, pady=(10, 18))
 
             # Two equal-size buttons adjacent
@@ -324,14 +335,14 @@ class CreateRoomScene(ttk.Frame):
             "PASSWORD": password
         })
         
-        # wait 50ms after sending message out, wait until IN_ROOM state is True
-        self.after(50, self.wait_for_room_connect)
+        # wait 5ms after sending message out, wait until IN_ROOM state is True
+        self.after(5, self.wait_for_room_connect)
         
     def wait_for_room_connect(self):
         if state["IN_ROOM"]:
             self.app.show("RoomScene")
         else:
-            self.after(50, self.wait_for_room_connect)
+            self.after(5, self.wait_for_room_connect)
 
     def go_back(self):
         self.app.show("ConnectedScene")
@@ -401,7 +412,7 @@ class JoinRoomScene(ttk.Frame):
         self.selected_requires_pw = False
 
         self.rooms_list.delete(0, "end")
-        rooms = self.app.chat_rooms or {}
+        rooms = state["CHAT_ROOMS"] or {}
 
         for room_name in rooms.keys():
             self.rooms_list.insert("end", room_name)
@@ -420,10 +431,10 @@ class JoinRoomScene(ttk.Frame):
         room_name = self.rooms_list.get(idxs[0])
         self.selected_room = room_name
 
-        info = (self.app.chat_rooms or {}).get(room_name, {})
-        owner = info.get("owner", "?")
-        users = info.get("users", [])
-        has_pw = info.get("has_password")
+        info = (state["CHAT_ROOMS"] or {}).get(room_name, {})
+        owner = info.get_owner()
+        users = info.list_users()
+        has_pw = info.has_password
         self.selected_requires_pw = has_pw
 
         self.details_label.config(
@@ -456,14 +467,14 @@ class JoinRoomScene(ttk.Frame):
             "PASSWORD": password
         })
 
-        # wait 50ms after sending message out, wait until IN_ROOM state is True
-        self.after(50, self.wait_for_room_connect)
+        # wait 5s after sending message out, wait until IN_ROOM state is True
+        self.after(5, self.wait_for_room_connect)
         
     def wait_for_room_connect(self):
         if state["IN_ROOM"]:
             self.app.show("RoomScene")
         else:
-            self.after(50, self.wait_for_room_connect)
+            self.after(5, self.wait_for_room_connect)
         
 import queue
 import tkinter as tk
@@ -533,7 +544,7 @@ class RoomScene(ttk.Frame):
         # Start polling loop once per time you enter this scene
         self._polling = True
         self.entry.focus_set()
-        self.after(50, self._poll_inbox)
+        self.after(5, self._poll_inbox)
 
     def on_hide(self):
         """
@@ -557,7 +568,15 @@ class RoomScene(ttk.Frame):
         """
         if not state.get("IN_ROOM"):
 
-            rejoin_info = local.get()
+            try:
+                rejoin_info = local.get(timeout=0.1)
+            except queue.Empty:
+                rejoin_info = None
+
+            if rejoin_info is None:
+                self.after(5, self.on_send)
+                return
+
             self._append_chat(f"[Broadcast]: {rejoin_info.get("MESSAGE")}")
 
             # go directly to the ConnectedScene
@@ -565,7 +584,7 @@ class RoomScene(ttk.Frame):
             self._set_input_enabled(False)
             self._polling = False
             
-            self.app.show("ConnectedScene")
+            self.app.rejoin()
             return
 
         msg = self.entry.get().strip()
@@ -589,7 +608,7 @@ class RoomScene(ttk.Frame):
         # Drain multiple messages per tick to stay responsive under load
         for _ in range(10):
             try:
-                msg = inbox.get_nowait()
+                msg = inbox.get(timeout=0.1)
             except queue.Empty:
                 break
 
@@ -616,7 +635,8 @@ class RoomScene(ttk.Frame):
                 pass
 
         # schedule next poll
-        self.after(10, self._poll_inbox)
+        self.after(5, self._poll_inbox)
+
 
 def main():
     # Create a TCP/IP socket, connect to the VPS IP address & port
