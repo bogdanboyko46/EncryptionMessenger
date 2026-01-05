@@ -40,7 +40,7 @@ def recieving_thread(s):
 
 def _wait_outbound():
     try:
-        contents = outbox.get(timeout=0.1)
+        contents = outbox.get(timeout=1)
         if contents:
             return contents
     except queue.Empty:
@@ -156,13 +156,19 @@ class ChatGUI(tk.Tk):
         frame.tkraise()
     
     def rejoin(self):
+        print("REJOINING!")
         frame = self.frames["ConnectedScene"]
 
         frame.welcome_label.config(text="Connecting...")
         for w in frame.content_frame.winfo_children():
             w.destroy()
 
-        self.after(100, frame.room_logic)
+        frame.welcome_label.config(text=f"Welcome to the VPS server, {state["USER"]}")
+
+        for w in frame.content_frame.winfo_children():
+            w.destroy()
+
+        frame.room_logic()
 
 
 class UsernameScene(ttk.Frame):
@@ -331,7 +337,7 @@ class CreateRoomScene(ttk.Frame):
     def create_room(self):
     
         room_name = self.room_entry.get()
-        password = self.room_entry.get()
+        password = self.pass_entry.get()
 
         if not password:
             password = None
@@ -353,7 +359,7 @@ class CreateRoomScene(ttk.Frame):
             self.after(5, self.wait_for_room_connect)
 
     def go_back(self):
-        self.app.show("ConnectedScene")
+        self.app.rejoin()
 
 
 class JoinRoomScene(ttk.Frame):
@@ -404,7 +410,7 @@ class JoinRoomScene(ttk.Frame):
         self.join_btn = ttk.Button(btn_row, text="Join", command=self.on_join)
         self.join_btn.grid(row=0, column=0, padx=10, ipadx=20, ipady=6)
 
-        back_btn = ttk.Button(btn_row, text="Back", command=lambda: self.app.show("ConnectedScene"))
+        back_btn = ttk.Button(btn_row, text="Back", command=lambda: self.app.rejoin())
         back_btn.grid(row=0, column=1, padx=10, ipadx=20, ipady=6)
 
         # Internal selection state
@@ -439,7 +445,7 @@ class JoinRoomScene(ttk.Frame):
         room_name = self.rooms_list.get(idxs[0])
         self.selected_room = room_name
 
-        info = (state["CHAT_ROOMS"] or {}).get(room_name, {})
+        info = state["CHAT_ROOMS"].get(room_name)
         owner = info.get_owner()
         users = info.list_users()
         has_pw = info.has_password
@@ -575,24 +581,6 @@ class RoomScene(ttk.Frame):
         Outbound messages must be event-driven (do NOT use a thread here).
         """
         if not state.get("IN_ROOM"):
-
-            try:
-                rejoin_info = local.get(timeout=0.1)
-            except queue.Empty:
-                rejoin_info = None
-
-            if rejoin_info is None:
-                self.after(5, self.on_send)
-                return
-
-            self._append_chat(f"[Broadcast]: {rejoin_info.get("MESSAGE")}")
-
-            # go directly to the ConnectedScene
-
-            self._set_input_enabled(False)
-            self._polling = False
-            
-            self.app.rejoin()
             return
 
         msg = self.entry.get().strip()
@@ -616,7 +604,7 @@ class RoomScene(ttk.Frame):
         # Drain multiple messages per tick to stay responsive under load
         for _ in range(10):
             try:
-                msg = inbox.get(timeout=0.1)
+                msg = local.get(timeout=0.1)
             except queue.Empty:
                 break
 
@@ -638,9 +626,16 @@ class RoomScene(ttk.Frame):
                 text = msg.get("MESSAGE", "")
                 self._append_chat(f"[BROADCAST] {text}")
 
-            else:
-                # Ignore other message types here (or log for debugging)
-                pass
+            elif mtype == "REJOIN":
+                text = msg.get("MESSAGE", "")
+                self._append_chat(f"[BROADCAST]: {text}")
+
+                self._set_input_enabled(False)
+                self._polling = False
+
+                self.app.rejoin()
+
+                # rejoin server
 
         # schedule next poll
         self.after(5, self._poll_inbox)
