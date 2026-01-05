@@ -15,7 +15,6 @@ state = {
     "USER": None,
 }
 
-
 inbox = queue.Queue()   # messages from server (dicts)
 outbox = queue.Queue()  # messages to be sent to relay server (dicts)
 
@@ -30,9 +29,8 @@ def room_assignment_action(chat_rooms):
     if chat_rooms:
         
         print("Current Chat Rooms: ")
-        if chat_rooms is not None and chat_rooms:
-            for chat_room_name, chat_room_obj in chat_rooms.items():
-                print(f"{chat_room_name} - Owner: {chat_room_obj.get_owner()} - Users: {chat_room_obj.list_users()}")
+        for chat_room_name, chat_room_obj in chat_rooms.items():
+            print(f"{chat_room_name} - Owner: {chat_room_obj.get_owner()} - Users: {chat_room_obj.list_users()}")
         print()
 
         # .get() function waits for the user to input a choice
