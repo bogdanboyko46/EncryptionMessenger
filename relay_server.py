@@ -18,7 +18,7 @@ def create_room(room_name, owner, password=None):
 
     # check to see if the room already exists
     if room_name in chat_rooms:
-        send_message(clients[owner].get_socket(), {"TYPE": "REJOIN", "MESSAGE": "Room already exists!"})
+        send_message(clients[owner].get_socket(), {"TYPE": "CREATE_REJECTED", "MESSAGE": "Room already exists!"})
         return
     
     temp_room = chat_room(room_name, owner, password)
@@ -39,7 +39,7 @@ def assign_room(conn, name, msg):
         
         # handles if the user is banned from the room or if the room does not exist
         if name in chat_rooms[room_name].ban_list:
-            send_message(conn, {"TYPE": "REJOIN", "CHAT_ROOMS": chat_rooms, "MESSAGE": "Room does not exist or you are banned from it!"})
+            send_message(conn, {"TYPE": "JOIN_REJECT", "CHAT_ROOMS": chat_rooms, "MESSAGE": "Room does not exist or you are banned from it!"})
             return None
         
         room = chat_rooms.get(room_name)
@@ -87,11 +87,9 @@ def handle_client(conn, addr):
     send_message(conn, {"TYPE": "REGISTRATION", "CHAT_ROOMS": chat_rooms, "MESSAGE": f"Welcome to the chat room server, {name}!"})
 
     # receives msg for room assignment
-    client_registration = recv_message(conn)
-
     # assigns the client as a key - value pair in the clients dict
-    clients[name] = Client(conn, name, client_registration)
-    chat_room_name = assign_room(conn, name, client_registration)
+    clients[name] = Client(conn, name)
+    chat_room_name = None
 
     # maps client name -> client object
 
@@ -101,15 +99,15 @@ def handle_client(conn, addr):
            
             # waits for message in the main loop
             msg = recv_message(conn)
-
+            
+            print("IS MSG NONE: ",msg is None)
             if msg is None:
                 break
-            
+            print("RECIEVED MSG: ",msg)
             mType = msg.get("TYPE")
 
             if mType in ("CREATE_ROOM", "JOIN_ROOM"):
                 chat_room_name = assign_room(conn, name, msg)
-                continue
 
             match mType:
                 case "SEND":
@@ -121,6 +119,14 @@ def handle_client(conn, addr):
                     if chat_room_name in chat_rooms:
                         print("SENDING NOW!")
                         chat_rooms[chat_room_name].send_message("RECEIVE", message, clients, from_user=name, chat_rooms=chat_rooms)
+                
+                case "RELOAD":
+                    # send the client the current chat rooms
+                    print("RELOAD MESSAGE RECIEVED!")
+                    send_message(conn, {"TYPE": "RELOAD", "CHAT_ROOMS": chat_rooms})
+                
+                case "DISCONNECT":
+                    break
 
     except Exception as e:
         print(f"Error: {e}")

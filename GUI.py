@@ -9,6 +9,7 @@ import queue
 import tkinter as tk
 from tkinter import ttk
 from protocol import send_message, recv_message
+from tkinter import font
 
 state = {
     "RUNNING": True,
@@ -41,8 +42,7 @@ def recieving_thread(s):
 def _wait_outbound():
     try:
         contents = outbox.get(timeout=1)
-        if contents:
-            return contents
+        return contents
     except queue.Empty:
         return _wait_outbound()
 
@@ -55,7 +55,8 @@ def outbox_thread(s):
         # invalid contents if condition passes; either null or contains nothing
         if contents is None or not contents:
             continue
-
+        
+        print(f"SENDING THIS: {contents}")
         # else, we send the contents to the relay server
         send_message(s, contents)
 
@@ -107,7 +108,7 @@ def process_inbox(s):
                     # All rejoin handling is done within the chat room scene class
 
                 # inbound messages coming from other users in the assigned room / from broadcast
-                case "RECEIVE" | "BROADCAST" | "REGISTRATION":
+                case "RECEIVE" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "JOIN_REJECT" | "CREATE_REJECT":
                     
                     print("RECEIEVED A MESSAGE INSIDE THE PROCESS INBOX THREAD! ",msg)
                     # process it in the local queue to print messages from users / print broadcast messages
@@ -149,6 +150,20 @@ class ChatGUI(tk.Tk):
         # Start at username scene
         self.show("UsernameScene")
 
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def on_close(self):
+        print("Shutting down client...")
+ 
+        state["RUNNING"] = False
+
+        try:
+            outbox.put({"TYPE": "DISCONNECT"})
+        except Exception:
+            pass
+            
+        self.destroy()
+
     def show(self, scene_name: str):
         """Raise (show) a scene by name."""
         frame = self.frames[scene_name]
@@ -156,19 +171,15 @@ class ChatGUI(tk.Tk):
         frame.tkraise()
     
     def rejoin(self):
-        print("REJOINING!")
         frame = self.frames["ConnectedScene"]
 
         frame.welcome_label.config(text="Connecting...")
         for w in frame.content_frame.winfo_children():
             w.destroy()
 
-        frame.welcome_label.config(text=f"Welcome to the VPS server, {state["USER"]}")
-
-        for w in frame.content_frame.winfo_children():
-            w.destroy()
-
+        frame.welcome_label.config(text=f"Welcome to the VPS server, {state['USER']}")
         frame.room_logic()
+        frame.tkraise()  # if you intend to actually show it immediately
 
 
 class UsernameScene(ttk.Frame):
@@ -286,11 +297,45 @@ class ConnectedScene(ttk.Frame):
             create_btn = ttk.Button(self.content_frame, text="Create", command=self.go_create)
             create_btn.grid(row=1, column=0, ipadx=40, ipady=10)
 
+            reload_font = font.Font(family="Arial", size=20, weight="bold")
+
+            reload_btn = ttk.Button(
+            self,
+            text="⟳",
+            command=self.reload_rooms
+                )
+            
+            reload_btn.configure(style="Reload.TButton")
+
+            style = ttk.Style()
+            style.configure("Reload.TButton", font=reload_font)
+
+            reload_btn.place(relx=1.0, rely=0.0, x=-12, y=12, anchor="ne")
+
+
     def go_create(self):
         self.app.show("CreateRoomScene")
 
     def go_join(self):
         self.app.show("JoinRoomScene")
+
+    def reload_rooms(self):
+        outbox.put({"TYPE": "RELOAD"})
+        self._local_poll_reload()
+    
+    def _local_poll_reload(self):
+        try:
+            contents = local.get_nowait()
+        except queue.Empty:
+            self.after(25, self._local_poll_reload)
+            return
+        
+        reloaded_chat_rooms = contents.get("CHAT_ROOMS")
+
+        state["CHAT_ROOMS"] = reloaded_chat_rooms
+        self.app.rejoin()
+
+        
 
 class CreateRoomScene(ttk.Frame):
     def __init__(self, parent, app):
