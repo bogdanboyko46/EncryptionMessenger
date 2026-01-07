@@ -29,7 +29,7 @@ class chat_room:
             
             else:
                 # only runs when a user is trying to join a password protected room with the wrong password, socket is provided when joining a password protected room
-                send_message(socket, {"TYPE": "REJOIN", "MESSAGE": "The password entered was incorrect!"})
+                send_message(socket, {"TYPE": "JOIN_REJECT", "MESSAGE": "The password entered was incorrect!"})
         else:
             self.users.append(name)
     
@@ -140,9 +140,18 @@ class chat_room:
 
                         if len(self.users) == 0:
                             # the only user will be an admin, so delete room
+
+                            # loop thru clients and remove the room in their history
+                            for client in clients.values():
+                                if self.room_name in client.room_history:
+                                
+                                    client.delete_room_history(self.room_name)
+                                    
                             if chat_rooms:
                                 # delete room from server and unassign user from room
                                 del chat_rooms[self.room_name]
+
+                                # check if the chat room is empty and room from chat rooms if so
                         else:
                             if from_user in self.admins:
                                 self.admins.remove(from_user)

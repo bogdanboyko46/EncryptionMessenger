@@ -16,7 +16,7 @@ state = {
     "IN_ROOM": False,
     "ROOM": None,
     "USER": None, 
-    "CHAT_ROOMS": None,
+    "ERROR_FLAG": False
 }
 
 inbox = queue.Queue()   # messages from server (dicts)
@@ -30,21 +30,22 @@ def recieving_thread(s):
         msg = recv_message(s)
         # in the case of a null msg sent to socket
         
-        print(f"THE RECEIEVED MESSAGE IS {msg}")
         if msg is None:
             print("Disconnected from server.")
             state["RUNNING"] = False
             s.close()
             break
         
+        print(f"RECIEVING {msg}")
         inbox.put(msg)
 
 def _wait_outbound():
-    try:
-        contents = outbox.get(timeout=1)
-        return contents
-    except queue.Empty:
-        return _wait_outbound()
+    while state["RUNNING"]:
+        try:
+            contents = outbox.get(timeout=5)
+            return contents
+        except queue.Empty:
+            pass
 
 def outbox_thread(s):
     while state["RUNNING"]:
@@ -52,11 +53,11 @@ def outbox_thread(s):
         # waits for contents patiently
         contents = _wait_outbound()
 
+        print(f"SENDING OUTBOX MSG: {contents}")
         # invalid contents if condition passes; either null or contains nothing
         if contents is None or not contents:
             continue
-        
-        print(f"SENDING THIS: {contents}")
+
         # else, we send the contents to the relay server
         send_message(s, contents)
 
@@ -66,7 +67,9 @@ def process_inbox(s):
     while state["RUNNING"]:
         try:
             # inbound logic - checks to see if inbox queue is empty
-            msg = inbox.get(timeout=0.1)
+            msg = inbox.get(timeout=5)
+
+            print(f"PROCESSING {msg}")
 
             # gets the type of the message
             mType = msg.get("TYPE")
@@ -78,7 +81,6 @@ def process_inbox(s):
                     # we are connected!
                     state["IN_ROOM"] = True
                     state["ROOM"] = msg.get("ROOM_NAME")
-                    state["CHAT_ROOMS"] = msg.get("CHAT_ROOMS")
 
                 # message type that indicates a logic error
                 case "ERROR":
@@ -100,7 +102,6 @@ def process_inbox(s):
                     # unassign user flags
                     state["IN_ROOM"] = False
                     state["ROOM"] = None
-                    state["CHAT_ROOMS"] = msg.get("CHAT_ROOMS")
                     
                     # PRINT SERVER MESSAGE TO USER - PROVIDE CHAT_ROOMS
                     local.put(msg)
@@ -108,15 +109,44 @@ def process_inbox(s):
                     # All rejoin handling is done within the chat room scene class
 
                 # inbound messages coming from other users in the assigned room / from broadcast
-                case "RECEIVE" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "JOIN_REJECT" | "CREATE_REJECT":
+                case "RECEIVE" | "BROADCAST" | "REGISTRATION" | "RELOAD":
                     
                     print("RECEIEVED A MESSAGE INSIDE THE PROCESS INBOX THREAD! ",msg)
                     # process it in the local queue to print messages from users / print broadcast messages
                     # when registered, make info like chat_rooms and server message accessible by local queue
                     local.put(msg)
                 
+                case "JOIN_REJECT" | "CREATE_REJECT":
+                    # set error flag to true
+                    state["ERROR_FLAG"] = True
+                    local.put(msg)
+                
         except queue.Empty:
             pass
+        
+
+def poll_registration(expected_type):
+    stash = []
+
+    while True:
+        try:
+            msg = local.get(timeout=.25)
+        except queue.Empty:
+            # retry
+            print("was empty!")
+            continue
+            
+        print("we got a message!")
+        msg_type = msg.get("TYPE")
+
+        print(f"type is {msg_type}")
+        if msg_type == expected_type:
+            for other in stash:
+                local.put(other)
+            return msg
+
+        # set aside the msg we cannot accept
+        stash.append(msg)
         
 class ChatGUI(tk.Tk):
     """
@@ -173,13 +203,22 @@ class ChatGUI(tk.Tk):
     def rejoin(self):
         frame = self.frames["ConnectedScene"]
 
-        frame.welcome_label.config(text="Connecting...")
+        # reload chat rooms
+        outbox.put({"TYPE": "RELOAD"})
+
+        frame.welcome_label.config(text=f"Welcome to the chat room server, {state['USER']}!")
+        returned_message = poll_registration("RELOAD") or {}
+
+        self.chat_rooms = returned_message.get("CHAT_ROOMS") or {}
+        welcome_message = returned_message.get("MESSAGE") or "Connected."
+
+        frame.welcome_label.config(text=welcome_message)
+
         for w in frame.content_frame.winfo_children():
             w.destroy()
 
-        frame.welcome_label.config(text=f"Welcome to the VPS server, {state['USER']}")
         frame.room_logic()
-        frame.tkraise()  # if you intend to actually show it immediately
+        frame.tkraise()
 
 
 class UsernameScene(ttk.Frame):
@@ -210,7 +249,7 @@ class UsernameScene(ttk.Frame):
     def on_submit(self, event=None):
         name = self.entry.get().strip()
         if not name:
-            return  # strict: do nothing on empty input
+            return  # do nothing on empty input
 
         state["USER"] = name
         self.app.show("ConnectedScene")
@@ -234,21 +273,34 @@ class ConnectedScene(ttk.Frame):
         self.content_frame.grid(row=1, column=0, sticky="n")
         self.content_frame.columnconfigure(0, weight=1)
 
+        reload_font = font.Font(family="Arial", size=20, weight="bold")
+
+        reload_btn = ttk.Button(
+        self,
+        text="⟳",
+        command=self.app.rejoin
+            )
+            
+        reload_btn.configure(style="Reload.TButton")
+
+        style = ttk.Style()
+        style.configure("Reload.TButton", font=reload_font)
+
+        reload_btn.place(relx=1.0, rely=0.0, x=-12, y=12, anchor="ne")
+
     def on_show(self):
         outbox.put({"NAME": state["USER"]})
         self.welcome_label.config(text="Connecting...")
         for w in self.content_frame.winfo_children():
             w.destroy()
-        self.after(100, self._poll_registration)
+        self.after(400, self._prepare_scene)
 
-    def _poll_registration(self):
-        try:
-            returned_message = local.get(timeout=0.1)
-        except queue.Empty:
-            self.after(5, self._poll_registration)
-            return
-        
-        state["CHAT_ROOMS"] = returned_message.get("CHAT_ROOMS") or {}
+    def _prepare_scene(self):
+
+        returned_message = poll_registration("REGISTRATION") or {}
+
+        print(f"IS MESSAGE NULL: {returned_message is None}")
+        self.chat_rooms = returned_message.get("CHAT_ROOMS") or {}
         welcome_message = returned_message.get("MESSAGE") or "Connected."
 
         self.welcome_label.config(text=welcome_message)
@@ -261,7 +313,7 @@ class ConnectedScene(ttk.Frame):
 
     def room_logic(self):
         # room logic
-        if state["CHAT_ROOMS"]:
+        if self.chat_rooms:
             prompt = ttk.Label(
                 self.content_frame,
                 text="Would you like to create or join a room?",
@@ -297,45 +349,12 @@ class ConnectedScene(ttk.Frame):
             create_btn = ttk.Button(self.content_frame, text="Create", command=self.go_create)
             create_btn.grid(row=1, column=0, ipadx=40, ipady=10)
 
-            reload_font = font.Font(family="Arial", size=20, weight="bold")
-
-            reload_btn = ttk.Button(
-            self,
-            text="⟳",
-            command=self.reload_rooms
-                )
-            
-            reload_btn.configure(style="Reload.TButton")
-
-            style = ttk.Style()
-            style.configure("Reload.TButton", font=reload_font)
-
-            reload_btn.place(relx=1.0, rely=0.0, x=-12, y=12, anchor="ne")
-
 
     def go_create(self):
         self.app.show("CreateRoomScene")
 
     def go_join(self):
         self.app.show("JoinRoomScene")
-
-    def reload_rooms(self):
-        outbox.put({"TYPE": "RELOAD"})
-        self._local_poll_reload()
-    
-    def _local_poll_reload(self):
-        try:
-            contents = local.get_nowait()
-        except queue.Empty:
-            self.after(25, self._local_poll_reload)
-            return
-        
-        reloaded_chat_rooms = contents.get("CHAT_ROOMS")
-
-        state["CHAT_ROOMS"] = reloaded_chat_rooms
-        self.app.rejoin()
-
-        
 
 class CreateRoomScene(ttk.Frame):
     def __init__(self, parent, app):
@@ -366,7 +385,14 @@ class CreateRoomScene(ttk.Frame):
 
         cancel_btn = ttk.Button(buttons, text="Cancel", command=self.go_back)
         cancel_btn.grid(row=0, column=1, padx=10)
-    
+
+        self.error_label = ttk.Label(self, text="", font=("Arial", 12))
+        self.error_label.grid(row=3, column=0, pady=(6, 6))
+
+        style = ttk.Style()
+        style.configure("Red.TLabel", foreground="red")
+        self.error_label.configure(style="Red.TLabel")
+
     def on_show(self):
         """
         Called every time this scene becomes visible.
@@ -380,9 +406,15 @@ class CreateRoomScene(ttk.Frame):
         self.room_entry.focus_set()
 
     def create_room(self):
-    
+        
         room_name = self.room_entry.get()
         password = self.pass_entry.get()
+
+        if not room_name:
+            msg = "You must enter a room name!"
+            self.error_label.config(text=msg)
+            self.on_show()
+            return
 
         if not password:
             password = None
@@ -399,11 +431,23 @@ class CreateRoomScene(ttk.Frame):
         
     def wait_for_room_connect(self):
         if state["IN_ROOM"]:
+            # if the in room state becomes true, then we can confirm that the room creation was successful
             self.app.show("RoomScene")
+        elif state["ERROR_FLAG"]:
+        
+            contents = poll_registration("CREATE_REJECT") or {}
+            msg = contents.get("MESSAGE") or "Error"
+            self.error_label.config(text=msg)
+
+            # set error flag back to false
+            state["ERROR_FLAG"] = False
+            self.on_show()
+
         else:
             self.after(5, self.wait_for_room_connect)
-
+            
     def go_back(self):
+        self.error_label.config(text="")
         self.app.rejoin()
 
 
@@ -463,22 +507,31 @@ class JoinRoomScene(ttk.Frame):
         self.selected_requires_pw = False
 
     def on_show(self):
-        # Rebuild room list from app.chat_rooms
+        # clear any past error messages
         self.error_label.config(text="")
+
+        # Rebuild room list from app.chat_rooms
         self.pass_entry.delete(0, "end")
         self.details_label.config(text="Select a room to see details.")
         self.selected_room = None
         self.selected_requires_pw = False
 
         self.rooms_list.delete(0, "end")
-        rooms = state["CHAT_ROOMS"] or {}
 
-        for room_name in rooms.keys():
+        # perform reload operation
+        outbox.put({"TYPE": "RELOAD"})
+        chat_room_info = poll_registration("RELOAD") or {}
+        self.rooms = chat_room_info.get("CHAT_ROOMS") or {}
+
+        for room_name in self.rooms.keys():
             self.rooms_list.insert("end", room_name)
 
-        if not rooms:
+        if not self.rooms:
             self.error_label.config(text="No rooms available to join.")
             self.join_btn.config(state="disabled")
+
+            # no rooms available, rejoin!
+            self.app.rejoin()
         else:
             self.join_btn.config(state="normal")
 
@@ -490,7 +543,11 @@ class JoinRoomScene(ttk.Frame):
         room_name = self.rooms_list.get(idxs[0])
         self.selected_room = room_name
 
-        info = state["CHAT_ROOMS"].get(room_name)
+        info = self.rooms.get(room_name)
+        # in case of failure to retrieve chat room corresponding chat room obj
+        if info is None:
+            return 
+        
         owner = info.get_owner()
         users = info.list_users()
         has_pw = info.has_password
@@ -530,8 +587,15 @@ class JoinRoomScene(ttk.Frame):
         self.after(5, self.wait_for_room_connect)
         
     def wait_for_room_connect(self):
+
         if state["IN_ROOM"]:
             self.app.show("RoomScene")
+
+        elif state["ERROR_FLAG"]:
+
+            self.error_label.config(text="The password entered was incorrect!")
+            self.on_show()
+
         else:
             self.after(5, self.wait_for_room_connect)
         
@@ -593,6 +657,7 @@ class RoomScene(ttk.Frame):
         Called by app.show("RoomScene").
         Start polling inbox safely and refresh UI.
         """
+
         room = state.get("ROOM") or ""
         user = state.get("USER") or ""
         self.header.config(text=f"Room: {room}    |    User: {user}")
@@ -623,7 +688,7 @@ class RoomScene(ttk.Frame):
 
     def on_send(self, event=None):
         """
-        Outbound messages must be event-driven (do NOT use a thread here).
+        Outbound messages must be event-driven
         """
         if not state.get("IN_ROOM"):
             return
@@ -636,7 +701,6 @@ class RoomScene(ttk.Frame):
 
         # show your own message locally
         self._append_chat(f"You: {msg}")
-
         outbox.put({"TYPE": "SEND", "MESSAGE": msg})
 
     def _poll_inbox(self):
@@ -649,7 +713,7 @@ class RoomScene(ttk.Frame):
         # Drain multiple messages per tick to stay responsive under load
         for _ in range(10):
             try:
-                msg = local.get(timeout=0.1)
+                msg = local.get(timeout=0.05)
             except queue.Empty:
                 break
 

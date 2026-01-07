@@ -18,11 +18,12 @@ def create_room(room_name, owner, password=None):
 
     # check to see if the room already exists
     if room_name in chat_rooms:
-        send_message(clients[owner].get_socket(), {"TYPE": "CREATE_REJECTED", "MESSAGE": "Room already exists!"})
-        return
+        send_message(clients[owner].get_socket(), {"TYPE": "CREATE_REJECT", "MESSAGE": "Room already exists!"})
+        return False
     
     temp_room = chat_room(room_name, owner, password)
     chat_rooms[room_name] = temp_room
+    return True
     # Prints out the room name and its creator
 
 # the computation for assigning a user to a room, prompts user to join or create one
@@ -31,14 +32,16 @@ def assign_room(conn, name, msg):
 
     # handles whether the client wants to join or create a room
     if msg and msg.get("TYPE") == "CREATE_ROOM":
-
-        create_room(room_name, name, msg.get("PASSWORD"))
         
+        # if a room was not able to be created, we return and do not create new room
+        if not create_room(room_name, name, msg.get("PASSWORD")):
+            return
+
     elif msg and msg.get("TYPE") == "JOIN_ROOM":
         # if user intends to join a room, it utilizes the add_user() function and adds the respective user
         
         # handles if the user is banned from the room or if the room does not exist
-        if name in chat_rooms[room_name].ban_list:
+        if room_name not in chat_rooms.keys() or name in chat_rooms[room_name].ban_list:
             send_message(conn, {"TYPE": "JOIN_REJECT", "CHAT_ROOMS": chat_rooms, "MESSAGE": "Room does not exist or you are banned from it!"})
             return None
         
@@ -46,16 +49,22 @@ def assign_room(conn, name, msg):
         if room:
             if room.has_password:
                 room.add_user(name, conn, msg.get("PASSWORD"))
+
+                # if user ended up not being in the room because of an incorrect password, we can apply a simple check to break out of the function
+                if not name in room.users:
+                    return None
+                
             else:
                 room.add_user(name)
         else:
             return None
 
-    print(f"[DEBUG] {name} has joined room: {room_name}")
     chat_rooms[room_name].broadcast(clients, name)
-
-    print(f"IS {room_name} in chat rooms: {room_name in chat_rooms}")
     send_message(conn, {"TYPE": "CONNECTED", "CHAT_ROOMS": chat_rooms, "ROOM_NAME": room_name})
+
+    # add room to room history
+    if room_name not in clients[name].room_history:
+        clients[name].add_room_history(room_name)
 
     return room_name
 
@@ -114,15 +123,11 @@ def handle_client(conn, addr):
                     # operation for a user sending a message to the room they are in
                     message = msg.get("MESSAGE")
 
-                    print(f"THE MESSAGE IS {message}")
-
                     if chat_room_name in chat_rooms:
-                        print("SENDING NOW!")
                         chat_rooms[chat_room_name].send_message("RECEIVE", message, clients, from_user=name, chat_rooms=chat_rooms)
                 
                 case "RELOAD":
                     # send the client the current chat rooms
-                    print("RELOAD MESSAGE RECIEVED!")
                     send_message(conn, {"TYPE": "RELOAD", "CHAT_ROOMS": chat_rooms})
                 
                 case "DISCONNECT":
@@ -135,15 +140,25 @@ def handle_client(conn, addr):
         print(f"[-] User disconnected: {name} from {addr}")
         # cleanup on disconnect
         with lock:
+            
+            # get user room history
+            user_room_history = clients[name].room_history or {}
+
             if name in clients:
                 del clients[name]
+
             # if the user was in a room, remove them from it
             if chat_room_name and chat_room_name in chat_rooms:
                 room = chat_rooms[chat_room_name]
                 if name in room.users:
                     room.remove_user(name)
                     room.send_message("BROADCAST", f"{name} has left the room.", clients, from_user=name)
-                
+
+                # deleted rooms are wiped from a clients history
+                for room in user_room_history:
+                    if name in chat_rooms[room].ban_list:
+                        chat_rooms[room].ban_list.remove(name)
+
                 if len(chat_rooms[chat_room_name].users) == 0:
                     del chat_rooms[chat_room_name]
                     print(f"[+] Room '{chat_room_name}' deleted due to no users remaining.")
