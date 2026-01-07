@@ -16,7 +16,8 @@ state = {
     "IN_ROOM": False,
     "ROOM": None,
     "USER": None, 
-    "ERROR_FLAG": False
+    "ERROR_FLAG": False,
+    "ROOM_ADMIN": False,
 }
 
 inbox = queue.Queue()   # messages from server (dicts)
@@ -432,7 +433,9 @@ class CreateRoomScene(ttk.Frame):
     def wait_for_room_connect(self):
         if state["IN_ROOM"]:
             # if the in room state becomes true, then we can confirm that the room creation was successful
+            state["ROOM_ADMIN"] = True
             self.app.show("RoomScene")
+
         elif state["ERROR_FLAG"]:
         
             contents = poll_registration("CREATE_REJECT") or {}
@@ -599,47 +602,76 @@ class JoinRoomScene(ttk.Frame):
         else:
             self.after(5, self.wait_for_room_connect)
         
-import queue
-import tkinter as tk
-from tkinter import ttk
-
-# Assumes these exist globally (like your client):
-# state = {"RUNNING": True, "IN_ROOM": False, "ROOM": None, "USER": None}
-# inbox = queue.Queue()   # messages from server
-# outbox = queue.Queue()  # messages to server
-
-
 class RoomScene(ttk.Frame):
+    """
+    Admin mode UI requirements implemented:
+      - Chat/messages ONLY in left half
+      - Room + User labels adjacent, left-aligned above chat box
+      - Right half contains "Admin Panel" centered
+      - "Admin Tools" and "Leave" buttons evenly spaced under the title
+      - Admin tools is NOT a new window; it is embedded in the right half
+    """
+
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
 
-        # Layout
+        self.chat_rooms = {} 
+
+        # Polling
+        self._polling = False
+        self._poll_job = None
+
+        # Root grid: header row removed in favor of left header inside body
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=0)  # header
-        self.rowconfigure(1, weight=1)  # chat area
-        self.rowconfigure(2, weight=0)  # input area
+        self.rowconfigure(0, weight=1)  # body
+        self.rowconfigure(1, weight=0)  # input
 
-        # Header
-        self.header = ttk.Label(self, text="", font=("Arial", 18))
-        self.header.grid(row=0, column=0, pady=(20, 10), padx=20, sticky="n")
+        self.body = ttk.Frame(self)
+        self.body.grid(row=0, column=0, sticky="nsew", padx=20, pady=(20, 10))
 
-        # Chat display (Text + scrollbar)
-        chat_frame = ttk.Frame(self)
-        chat_frame.grid(row=1, column=0, sticky="nsew", padx=20)
-        chat_frame.columnconfigure(0, weight=1)
-        chat_frame.rowconfigure(0, weight=1)
+        self.body.columnconfigure(0, weight=3) # left
+        self.body.columnconfigure(1, weight=2) # right
+        self.body.rowconfigure(0, weight=0) # left header row
+        self.body.rowconfigure(1, weight=1) # main row
 
-        self.chat_text = tk.Text(chat_frame, wrap="word", state="disabled")
+        left_header = ttk.Frame(self.body)
+        left_header.grid(row=0, column=0, sticky="w", pady=(0, 10))
+        self.room_label = ttk.Label(left_header, text="", font=("Arial", 14))
+        self.user_label = ttk.Label(left_header, text="", font=("Arial", 14))
+        self.room_label.grid(row=0, column=0, sticky="w")
+        self.user_label.grid(row=0, column=1, sticky="w", padx=(25, 0))
+
+        self.chat_container = ttk.Frame(self.body)
+        self.chat_container.grid(row=1, column=0, sticky="nsew")
+        self.chat_container.columnconfigure(0, weight=1)
+        self.chat_container.rowconfigure(0, weight=1)
+
+        self.chat_text = tk.Text(self.chat_container, wrap="word", state="disabled")
         self.chat_text.grid(row=0, column=0, sticky="nsew")
 
-        scroll = ttk.Scrollbar(chat_frame, orient="vertical", command=self.chat_text.yview)
+        scroll = ttk.Scrollbar(self.chat_container, orient="vertical", command=self.chat_text.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         self.chat_text.configure(yscrollcommand=scroll.set)
 
-        # Input row
+        self.admin_container = ttk.Frame(self.body)
+        self.admin_container.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(20, 0))
+        self.admin_container.columnconfigure(0, weight=1)
+        self.admin_container.rowconfigure(0, weight=1)
+
+        self.admin_stack = ttk.Frame(self.admin_container)
+        self.admin_stack.grid(row=0, column=0, sticky="nsew")
+        self.admin_stack.columnconfigure(0, weight=1)
+        self.admin_stack.rowconfigure(0, weight=1)
+
+        self._build_admin_main_view()
+        self._build_admin_tools_view()
+
+        # Start on main view
+        self._show_admin_main_view()
+
         input_frame = ttk.Frame(self)
-        input_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=(10, 20))
+        input_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(10, 20))
         input_frame.columnconfigure(0, weight=1)
 
         self.entry = ttk.Entry(input_frame)
@@ -649,32 +681,110 @@ class RoomScene(ttk.Frame):
         self.send_btn = ttk.Button(input_frame, text="Send", command=self.on_send)
         self.send_btn.grid(row=0, column=1, padx=(10, 0))
 
-        # Internal flag for polling loop
-        self._polling = False
+        # Start in normal mode until on_show() runs
+        self._set_admin_mode(False)
+
+
+    def _build_admin_main_view(self):
+        self.admin_main = ttk.Frame(self.admin_stack)
+        self.admin_main.grid(row=0, column=0, sticky="nsew")
+        self.admin_main.columnconfigure(0, weight=1)
+
+        # Spacer weights to center the title and space buttons evenly
+        self.admin_main.rowconfigure(0, weight=3)  # top spacer
+        self.admin_main.rowconfigure(1, weight=0)  # title
+        self.admin_main.rowconfigure(2, weight=1)  # spacer
+        self.admin_main.rowconfigure(3, weight=0)  # button 1
+        self.admin_main.rowconfigure(4, weight=1)  # spacer (equal-ish)
+        self.admin_main.rowconfigure(5, weight=0)  # button 2
+        self.admin_main.rowconfigure(6, weight=3)  # bottom spacer
+
+        title = ttk.Label(self.admin_main, text="Admin Panel", font=("Arial", 18))
+        title.grid(row=1, column=0, pady=(0, 20))
+
+        self.admin_tools_btn = ttk.Button(
+            self.admin_main, text="Admin Tools", command=self._show_admin_tools_view
+        )
+        self.admin_tools_btn.grid(row=3, column=0, ipadx=30, ipady=12)
+
+        self.leave_btn = ttk.Button(self.admin_main, text="Leave", command=self._leave_room)
+        self.leave_btn.grid(row=5, column=0, ipadx=30, ipady=12)
+
+    def _build_admin_tools_view(self):
+        """Right pane tools: embedded list + actions + back."""
+        self.admin_tools = ttk.Frame(self.admin_stack)
+        self.admin_tools.grid(row=0, column=0, sticky="nsew")
+        self.admin_tools.columnconfigure(0, weight=1)
+        self.admin_tools.rowconfigure(2, weight=1)
+
+        hdr = ttk.Label(self.admin_tools, text="Please select a user(s):", font=("Arial", 16))
+        hdr.grid(row=0, column=0, sticky="w", pady=(10, 10))
+
+        self._admin_list = tk.Listbox(self.admin_tools, selectmode="extended")
+        self._admin_list.grid(row=2, column=0, sticky="nsew")
+
+        btn_row = ttk.Frame(self.admin_tools)
+        btn_row.grid(row=3, column=0, sticky="e", pady=(10, 10))
+
+        ttk.Button(btn_row, text="Kick", command=lambda: self._admin_action("remove")).grid(row=0, column=0, padx=5)
+        ttk.Button(btn_row, text="Ban", command=lambda: self._admin_action("ban")).grid(row=0, column=1, padx=5)
+        ttk.Button(btn_row, text="Make Admin", command=lambda: self._admin_action("makeadmin")).grid(row=0, column=2, padx=5)
+
+        ttk.Button(self.admin_tools, text="Back", command=self._show_admin_main_view).grid(
+            row=4, column=0, sticky="w", pady=(0, 10)
+        )
+
+    def _show_admin_main_view(self):
+        self.admin_main.tkraise()
+
+    def _show_admin_tools_view(self):
+        # Ask server to refresh chat_rooms
+        outbox.put({"TYPE": "RELOAD"})
+
+        self._refresh_admin_list_from_chat_rooms()
+        self.admin_tools.tkraise()
+
+    def _set_admin_mode(self, is_admin):
+        """
+        If admin: show right panel; chat stays in left column only.
+        If not admin: hide right panel and let chat span across both columns.
+        """
+        if is_admin:
+            self.admin_container.grid()  # show
+            self.chat_container.grid_configure(columnspan=1)
+        else:
+            self.admin_container.grid_remove()  # hide
+            self.chat_container.grid_configure(columnspan=2)
+
 
     def on_show(self):
-        """
-        Called by app.show("RoomScene").
-        Start polling inbox safely and refresh UI.
-        """
-
+        """Call this when the app shows this frame."""
         room = state.get("ROOM") or ""
         user = state.get("USER") or ""
-        self.header.config(text=f"Room: {room}    |    User: {user}")
+        self.room_label.config(text=f"Room: {room}")
+        self.user_label.config(text=f"User: {user}")
 
-        # Enable input only if actually in room
         self._set_input_enabled(bool(state.get("IN_ROOM")))
+        self._set_admin_mode(bool(state.get("ROOM_ADMIN")))
 
-        # Start polling loop once per time you enter this scene
-        self._polling = True
-        self.entry.focus_set()
-        self.after(5, self._poll_inbox)
+        if not self._polling:
+            self._polling = True
+            self.entry.focus_set()
+            self._schedule_poll()
 
     def on_hide(self):
-        """
-        Optional: call this when leaving the scene to stop polling.
-        """
+        """Call this when leaving the scene to stop polling cleanly."""
         self._polling = False
+        if self._poll_job is not None:
+            try:
+                self.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
+
+    def _schedule_poll(self):
+        self._poll_job = self.after(10, self._poll_inbox)
+
 
     def _set_input_enabled(self, enabled: bool):
         self.entry.configure(state=("normal" if enabled else "disabled"))
@@ -686,10 +796,8 @@ class RoomScene(ttk.Frame):
         self.chat_text.see("end")
         self.chat_text.configure(state="disabled")
 
+
     def on_send(self, event=None):
-        """
-        Outbound messages must be event-driven
-        """
         if not state.get("IN_ROOM"):
             return
 
@@ -699,29 +807,72 @@ class RoomScene(ttk.Frame):
 
         self.entry.delete(0, "end")
 
-        # show your own message locally
         self._append_chat(f"You: {msg}")
+
         outbox.put({"TYPE": "SEND", "MESSAGE": msg})
 
+    def _refresh_admin_list_from_chat_rooms(self):
+        room_name = state.get("ROOM")
+        if not room_name:
+            return
+
+        if not self.chat_rooms.get(room_name):
+            return
+        
+        chat_room = self.chat_rooms.get(room_name)
+
+        if not chat_room:
+            return
+        
+        admins = chat_room.admins
+        me = state.get("USER")
+
+        self._admin_list.delete(0, "end")
+        for u in admins:
+            if u == me:
+                continue
+            self._admin_list.insert("end", u)
+
+    def _get_selected_users(self):
+        idxs = self._admin_list.curselection()
+        return [self._admin_list.get(i) for i in idxs]
+
+    def _admin_action(self, action_type: str):
+        users = self._get_selected_users()
+        if not users:
+            self._append_chat("[ADMIN] No user selected.")
+            return
+
+        # You are using command messages; keep that pattern:
+        for user in users:
+            outbox.put({"TYPE": "SEND", "MESSAGE": f"!{action_type} {user}"})
+
+        self._append_chat(f"[ADMIN] Sent {action_type} for: {', '.join(users)}")
+
+    def _leave_room(self):
+        outbox.put({"TYPE": "SEND", "MESSAGE": "!leave"})
+        state["IN_ROOM"] = False
+        state["ROOM_ADMIN"] = False
+        self._set_input_enabled(False)
+        self._set_admin_mode(False)
+
+        # return to connected scene
+
     def _poll_inbox(self):
-        """
-        Poll inbox without blocking
-        """
         if not self._polling or not state.get("RUNNING"):
             return
 
-        # Drain multiple messages per tick to stay responsive under load
-        for _ in range(10):
+        for _ in range(85):
             try:
-                msg = local.get(timeout=0.05)
+                msg = local.get(timeout=.15)
             except queue.Empty:
                 break
 
             if not msg:
-                # Treat empty/None as disconnect signal
                 state["RUNNING"] = False
                 self._append_chat("[SERVER] Disconnected.")
                 self._set_input_enabled(False)
+                self._polling = False
                 return
 
             mtype = msg.get("TYPE")
@@ -737,17 +888,26 @@ class RoomScene(ttk.Frame):
 
             elif mtype == "REJOIN":
                 text = msg.get("MESSAGE", "")
-                self._append_chat(f"[BROADCAST]: {text}")
-
+                self._append_chat(f"[BROADCAST] {text}")
                 self._set_input_enabled(False)
                 self._polling = False
-
+                state["ROOM_ADMIN"] = False
                 self.app.rejoin()
+                return
 
-                # rejoin server
+            elif mtype == "ADMIN":
+                # promote current user to admin; switch UI, do NOT call on_show()
+                state["ROOM_ADMIN"] = True
+                self._set_admin_mode(True)
 
-        # schedule next poll
-        self.after(5, self._poll_inbox)
+            elif mtype == "RELOAD":
+                self.chat_rooms = msg.get("CHAT_ROOMS") or self.chat_rooms
+
+                # After updating chat_rooms, refresh embedded admin list
+                self.chat_room = self.chat_rooms.get(state["ROOM"])
+                self._refresh_admin_list_from_chat_rooms()
+
+        self._schedule_poll()
 
 
 def main():

@@ -107,7 +107,9 @@ class chat_room:
 
                         # adds user to admin list and sends appropriate messages
                         self.admins.append(user)
-                        send_message(clients[user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": "You have been made an admin by an existing admin."})
+                        new_admin_socket = clients[user].get_socket()
+                        send_message(new_admin_socket, {"TYPE": "ADMIN"})
+                        send_message(new_admin_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made an admin by an existing admin."})
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": f"Made {user} admin"})
 
                     case "!ban":
@@ -159,6 +161,11 @@ class chat_room:
                                 # the first user in the list becomes admin if admin leaves
                                 if len(self.admins) == 0:
                                     self.admins.append(self.users[0])
+
+                                    # send admin msg to user - update's user scene
+                                    to_socket = clients[self.users[0]]
+                                    send_message(to_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made an admin by an existing admin."})
+                                    send_message(to_socket, {"TYPE": "ADMIN"})
 
                         send_message(clients[from_user].get_socket(), {"TYPE": "REJOIN", "MESSAGE": "You have left the room."})
 
