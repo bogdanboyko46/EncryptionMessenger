@@ -12,13 +12,16 @@ from protocol import send_message, recv_message
 from tkinter import font
 
 state = {
+
     "RUNNING": True,
     "IN_ROOM": False,
     "ROOM": None,
     "USER": None, 
-    "JOIN_REJECT": False,
-    "CREATE_REJECT": False,
-    "ROOM_ADMIN": False,
+
+    "ROOM_ACTION_ERROR": {
+        "JOIN_REJECT": False,
+        "CREATE_REJECT": False,
+    },
 }
 
 inbox = queue.Queue()   # messages from server (dicts)
@@ -118,7 +121,7 @@ def process_inbox(s):
                 case "JOIN_REJECT" | "CREATE_REJECT":
                     # set error flag to true
                     
-                    state[mType] = True
+                    state["ROOM_ACTION_ERROR"][mType] = True
                     local.put(msg)
 
         except queue.Empty:
@@ -147,15 +150,6 @@ def poll_registration(expected_type):
         stash.append(msg)
         
 class ChatGUI(tk.Tk):
-    """
-    Scene-based Tkinter app:
-      - UsernameScene
-      - ConnectedScene (branches based on chat_rooms)
-      - CreateRoomScene (placeholder)
-      - JoinRoomScene (placeholder)
-      - RoomScene
-    """
-
     def __init__(self):
         super().__init__()
 
@@ -436,17 +430,17 @@ class CreateRoomScene(ttk.Frame):
     def wait_for_room_connect(self):
         if state["IN_ROOM"]:
             # if the in room state becomes true, then we can confirm that the room creation was successful
-            state["ROOM_ADMIN"] = True
+            self.app.frame["RoomScene"]._is_admin = True
             self.app.show("RoomScene")
 
-        elif state["CREATE_REJECT"]:
+        elif state["ROOM_ACTION_ERROR"]["CREATE_REJECT"]:
             
             contents = poll_registration("CREATE_REJECT") or {}
             msg = contents.get("MESSAGE") or "Error"
             self.error_label.config(text=msg)
 
             # set error flag back to false
-            state["CREATE_REJECT"] = False
+            state["ROOM_ACTION_ERROR"]["CREATE_REJECT"] = False
             self.on_show()
 
         else:
@@ -595,29 +589,21 @@ class JoinRoomScene(ttk.Frame):
         if state["IN_ROOM"]:
             # if the in room state becomes true, then we can confirm that the room creation was successful
             self.app.show("RoomScene")
-
-        elif state["JOIN_REJECT"]:
+            
+        elif state["ROOM_ACTION_ERROR"]["JOIN_REJECT"]:
             
             contents = poll_registration("JOIN_REJECT") or {}
             msg = contents.get("MESSAGE") or "Error"
             self.error_label.config(text=msg)
 
             # set error flag back to false
-            state["JOIN_REJECT"] = False
+            state["ROOM_ACTION_ERROR"]["JOIN_REJECT"] = False
             self.on_room_select()
 
         else:
             self.after(5, self.wait_for_room_connect)
         
 class RoomScene(ttk.Frame):
-    """
-    Admin mode UI requirements implemented:
-      - Chat/messages ONLY in left half
-      - Room + User labels adjacent, left-aligned above chat box
-      - Right half contains "Admin Panel" centered
-      - "Admin Tools" and "Leave" buttons evenly spaced under the title
-      - Admin tools is NOT a new window; it is embedded in the right half
-    """
 
     def __init__(self, parent, app):
         super().__init__(parent)
@@ -628,6 +614,7 @@ class RoomScene(ttk.Frame):
         # Polling
         self._polling = False
         self._poll_job = None
+        self._is_admin = False
 
         # Root grid: header row removed in favor of left header inside body
         self.columnconfigure(0, weight=1)
@@ -689,7 +676,7 @@ class RoomScene(ttk.Frame):
         self.send_btn.grid(row=0, column=1, padx=(10, 0))
 
         # Start in normal mode until on_show() runs
-        self._set_admin_mode(False)
+        self._set_admin_mode()
 
 
     def _build_admin_main_view(self):
@@ -751,12 +738,12 @@ class RoomScene(ttk.Frame):
         self._refresh_admin_list_from_chat_rooms()
         self.admin_tools.tkraise()
 
-    def _set_admin_mode(self, is_admin):
+    def _set_admin_mode(self):
         """
         If admin: show right panel; chat stays in left column only.
         If not admin: hide right panel and let chat span across both columns.
         """
-        if is_admin:
+        if self._is_admin:
             self.admin_container.grid()  # show
             self.chat_container.grid_configure(columnspan=1)
         else:
@@ -772,7 +759,7 @@ class RoomScene(ttk.Frame):
         self.user_label.config(text=f"User: {user}")
 
         self._set_input_enabled(bool(state.get("IN_ROOM")))
-        self._set_admin_mode(bool(state.get("ROOM_ADMIN")))
+        self._set_admin_mode()
 
         if not self._polling:
             self._polling = True
@@ -780,7 +767,6 @@ class RoomScene(ttk.Frame):
             self._schedule_poll()
 
     def on_hide(self):
-        """Call this when leaving the scene to stop polling cleanly."""
         self._polling = False
         if self._poll_job is not None:
             try:
@@ -859,9 +845,9 @@ class RoomScene(ttk.Frame):
 
     def _leave_room(self):
         outbox.put({"TYPE": "COMMAND", "MESSAGE": "!leave"})
-        state["ROOM_ADMIN"] = False
+        self._is_admin = False
         self._set_input_enabled(False)
-        self._set_admin_mode(False)
+        self._set_admin_mode()
         # return to connected scene
 
     def _poll_inbox(self):
@@ -897,15 +883,14 @@ class RoomScene(ttk.Frame):
             self._append_chat(f"[BROADCAST] {text}")
             self._set_input_enabled(False)
             self._polling = False
-            state["ROOM_ADMIN"] = False
+            self._is_admin = False
             self.app.rejoin()
             return
 
         elif mtype == "ADMIN":
             # promote current user to admin
-            print("ADMIN FLAG ENABLED")
-            state["ROOM_ADMIN"] = True
-            self._set_admin_mode(True)
+            self._is_admin = True
+            self._set_admin_mode()
 
         elif mtype == "RELOAD":
             self.chat_rooms = msg.get("CHAT_ROOMS") or self.chat_rooms
@@ -918,7 +903,7 @@ class RoomScene(ttk.Frame):
 
 
 def main():
-    # Create a TCP/IP socket, connect to the VPS IP address & port
+    # Create a TCP/IP socket, connect to the VPS IP address
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect(("72.62.81.113", 5000))
      
