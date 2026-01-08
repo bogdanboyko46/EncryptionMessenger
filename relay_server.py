@@ -119,12 +119,12 @@ def handle_client(conn, addr):
                 chat_room_name = assign_room(conn, name, msg)
 
             match mType:
-                case "SEND":
+                case "SEND" | "COMMAND":
                     # operation for a user sending a message to the room they are in
                     message = msg.get("MESSAGE")
 
                     if chat_room_name in chat_rooms:
-                        chat_rooms[chat_room_name].send_message("RECEIVE", message, clients, from_user=name, chat_rooms=chat_rooms)
+                        chat_rooms[chat_room_name].send_message(mType if mType == "COMMAND" else "RECEIVE", message, clients, from_user=name, chat_rooms=chat_rooms)
                 
                 case "RELOAD":
                     # send the client the current chat rooms

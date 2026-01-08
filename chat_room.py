@@ -62,7 +62,7 @@ class chat_room:
             return
         
         # commands
-        if message[0] == "!":
+        if type == "COMMAND":
             msglist = message.split(" ")
             command = msglist[0]
 

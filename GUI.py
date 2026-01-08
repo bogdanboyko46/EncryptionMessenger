@@ -16,7 +16,8 @@ state = {
     "IN_ROOM": False,
     "ROOM": None,
     "USER": None, 
-    "ERROR_FLAG": False,
+    "JOIN_REJECT": False,
+    "CREATE_REJECT": False,
     "ROOM_ADMIN": False,
 }
 
@@ -43,7 +44,7 @@ def recieving_thread(s):
 def _wait_outbound():
     while state["RUNNING"]:
         try:
-            contents = outbox.get(timeout=5)
+            contents = outbox.get(timeout=.25)
             return contents
         except queue.Empty:
             pass
@@ -54,7 +55,6 @@ def outbox_thread(s):
         # waits for contents patiently
         contents = _wait_outbound()
 
-        print(f"SENDING OUTBOX MSG: {contents}")
         # invalid contents if condition passes; either null or contains nothing
         if contents is None or not contents:
             continue
@@ -68,9 +68,7 @@ def process_inbox(s):
     while state["RUNNING"]:
         try:
             # inbound logic - checks to see if inbox queue is empty
-            msg = inbox.get(timeout=5)
-
-            print(f"PROCESSING {msg}")
+            msg = inbox.get(timeout=.25)
 
             # gets the type of the message
             mType = msg.get("TYPE")
@@ -90,13 +88,14 @@ def process_inbox(s):
 
                     print(f"[Error]: {error_message}")
                     state["RUNNING"] = False
+                    s.close()
 
                 # message type that disconnected a user from a room, user now needs room reassignment
                 case "REJOIN":
                     
                     # drain anything from current inbox
                     try:
-                        inbox.get(timeout=0.1)
+                        inbox.get(timeout=0.25)
                     except queue.Empty:
                         pass
 
@@ -110,18 +109,18 @@ def process_inbox(s):
                     # All rejoin handling is done within the chat room scene class
 
                 # inbound messages coming from other users in the assigned room / from broadcast
-                case "RECEIVE" | "BROADCAST" | "REGISTRATION" | "RELOAD":
+                case "RECEIVE" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "ADMIN":
                     
-                    print("RECEIEVED A MESSAGE INSIDE THE PROCESS INBOX THREAD! ",msg)
                     # process it in the local queue to print messages from users / print broadcast messages
                     # when registered, make info like chat_rooms and server message accessible by local queue
                     local.put(msg)
                 
                 case "JOIN_REJECT" | "CREATE_REJECT":
                     # set error flag to true
-                    state["ERROR_FLAG"] = True
+                    
+                    state[mType] = True
                     local.put(msg)
-                
+
         except queue.Empty:
             pass
         
@@ -134,10 +133,8 @@ def poll_registration(expected_type):
             msg = local.get(timeout=.25)
         except queue.Empty:
             # retry
-            print("was empty!")
             continue
             
-        print("we got a message!")
         msg_type = msg.get("TYPE")
 
         print(f"type is {msg_type}")
@@ -163,7 +160,7 @@ class ChatGUI(tk.Tk):
         super().__init__()
 
         self.title("Chat Room Messenger")
-        self.geometry("900x550")
+        self.geometry("975x550")
 
         # Container that holds all scenes
         container = ttk.Frame(self, padding=0)
@@ -210,14 +207,12 @@ class ChatGUI(tk.Tk):
         frame.welcome_label.config(text=f"Welcome to the chat room server, {state['USER']}!")
         returned_message = poll_registration("RELOAD") or {}
 
-        self.chat_rooms = returned_message.get("CHAT_ROOMS") or {}
-        welcome_message = returned_message.get("MESSAGE") or "Connected."
-
-        frame.welcome_label.config(text=welcome_message)
+        chat_rooms = returned_message.get("CHAT_ROOMS") or {}
 
         for w in frame.content_frame.winfo_children():
             w.destroy()
 
+        frame.chat_rooms = chat_rooms
         frame.room_logic()
         frame.tkraise()
 
@@ -300,7 +295,6 @@ class ConnectedScene(ttk.Frame):
 
         returned_message = poll_registration("REGISTRATION") or {}
 
-        print(f"IS MESSAGE NULL: {returned_message is None}")
         self.chat_rooms = returned_message.get("CHAT_ROOMS") or {}
         welcome_message = returned_message.get("MESSAGE") or "Connected."
 
@@ -352,9 +346,15 @@ class ConnectedScene(ttk.Frame):
 
 
     def go_create(self):
+        # clear any past error msgs if any
+        self.app.frames["CreateRoomScene"].error_label.config(text="")
+
         self.app.show("CreateRoomScene")
 
     def go_join(self):
+        # clear any past error msgs if any
+        self.app.frames["JoinRoomScene"].error_label.config(text="")
+
         self.app.show("JoinRoomScene")
 
 class CreateRoomScene(ttk.Frame):
@@ -402,12 +402,15 @@ class CreateRoomScene(ttk.Frame):
         # Clear previous input
         self.room_entry.delete(0, "end")
         self.pass_entry.delete(0, "end")
-
+        
         # Focus the room name field
         self.room_entry.focus_set()
 
     def create_room(self):
         
+        # clear error msg when user tries to create a room again
+        self.error_label.config(text="")
+
         room_name = self.room_entry.get()
         password = self.pass_entry.get()
 
@@ -436,14 +439,14 @@ class CreateRoomScene(ttk.Frame):
             state["ROOM_ADMIN"] = True
             self.app.show("RoomScene")
 
-        elif state["ERROR_FLAG"]:
-        
+        elif state["CREATE_REJECT"]:
+            
             contents = poll_registration("CREATE_REJECT") or {}
             msg = contents.get("MESSAGE") or "Error"
             self.error_label.config(text=msg)
 
             # set error flag back to false
-            state["ERROR_FLAG"] = False
+            state["CREATE_REJECT"] = False
             self.on_show()
 
         else:
@@ -568,8 +571,6 @@ class JoinRoomScene(ttk.Frame):
             self.join_btn.focus_set()
 
     def on_join(self):
-        self.error_label.config(text="")
-
         if not self.selected_room:
             self.error_label.config(text="Select a room first.")
             return
@@ -592,12 +593,18 @@ class JoinRoomScene(ttk.Frame):
     def wait_for_room_connect(self):
 
         if state["IN_ROOM"]:
+            # if the in room state becomes true, then we can confirm that the room creation was successful
             self.app.show("RoomScene")
 
-        elif state["ERROR_FLAG"]:
+        elif state["JOIN_REJECT"]:
+            
+            contents = poll_registration("JOIN_REJECT") or {}
+            msg = contents.get("MESSAGE") or "Error"
+            self.error_label.config(text=msg)
 
-            self.error_label.config(text="The password entered was incorrect!")
-            self.on_show()
+            # set error flag back to false
+            state["JOIN_REJECT"] = False
+            self.on_room_select()
 
         else:
             self.after(5, self.wait_for_room_connect)
@@ -809,28 +816,29 @@ class RoomScene(ttk.Frame):
 
         self._append_chat(f"You: {msg}")
 
-        outbox.put({"TYPE": "SEND", "MESSAGE": msg})
+        msgtype = "COMMAND" if msg[0] == "!" else "SEND"
+        outbox.put({"TYPE": msgtype, "MESSAGE": msg})
 
     def _refresh_admin_list_from_chat_rooms(self):
         room_name = state.get("ROOM")
         if not room_name:
             return
 
-        if not self.chat_rooms.get(room_name):
-            return
-        
         chat_room = self.chat_rooms.get(room_name)
-
         if not chat_room:
             return
-        
+
+        users = chat_room.users
         admins = chat_room.admins
         me = state.get("USER")
 
         self._admin_list.delete(0, "end")
-        for u in admins:
-            if u == me:
+
+        for u in users:
+            if u == me or u in admins:
                 continue
+
+            #  mark admins
             self._admin_list.insert("end", u)
 
     def _get_selected_users(self):
@@ -845,67 +853,66 @@ class RoomScene(ttk.Frame):
 
         # You are using command messages; keep that pattern:
         for user in users:
-            outbox.put({"TYPE": "SEND", "MESSAGE": f"!{action_type} {user}"})
+            outbox.put({"TYPE": "COMMAND", "MESSAGE": f"!{action_type} {user}"})
 
         self._append_chat(f"[ADMIN] Sent {action_type} for: {', '.join(users)}")
 
     def _leave_room(self):
-        outbox.put({"TYPE": "SEND", "MESSAGE": "!leave"})
-        state["IN_ROOM"] = False
+        outbox.put({"TYPE": "COMMAND", "MESSAGE": "!leave"})
         state["ROOM_ADMIN"] = False
         self._set_input_enabled(False)
         self._set_admin_mode(False)
-
         # return to connected scene
 
     def _poll_inbox(self):
         if not self._polling or not state.get("RUNNING"):
             return
+        
+        try:
+            msg = local.get(timeout=.01)
+        except queue.Empty:
+            self._schedule_poll()
+            return
 
-        for _ in range(85):
-            try:
-                msg = local.get(timeout=.15)
-            except queue.Empty:
-                break
+        if not msg:
+            state["RUNNING"] = False
+            self._append_chat("[SERVER] Disconnected.")
+            self._set_input_enabled(False)
+            self._polling = False
+            return
 
-            if not msg:
-                state["RUNNING"] = False
-                self._append_chat("[SERVER] Disconnected.")
-                self._set_input_enabled(False)
-                self._polling = False
-                return
+        mtype = msg.get("TYPE")
 
-            mtype = msg.get("TYPE")
+        if mtype == "RECEIVE":
+            frm = msg.get("FROM", "?")
+            text = msg.get("MESSAGE", "")
+            self._append_chat(f"{frm}: {text}")
 
-            if mtype == "RECEIVE":
-                frm = msg.get("FROM", "?")
-                text = msg.get("MESSAGE", "")
-                self._append_chat(f"{frm}: {text}")
+        elif mtype == "BROADCAST":
+            text = msg.get("MESSAGE", "")
+            self._append_chat(f"[BROADCAST] {text}")
 
-            elif mtype == "BROADCAST":
-                text = msg.get("MESSAGE", "")
-                self._append_chat(f"[BROADCAST] {text}")
+        elif mtype == "REJOIN":
+            text = msg.get("MESSAGE", "")
+            self._append_chat(f"[BROADCAST] {text}")
+            self._set_input_enabled(False)
+            self._polling = False
+            state["ROOM_ADMIN"] = False
+            self.app.rejoin()
+            return
 
-            elif mtype == "REJOIN":
-                text = msg.get("MESSAGE", "")
-                self._append_chat(f"[BROADCAST] {text}")
-                self._set_input_enabled(False)
-                self._polling = False
-                state["ROOM_ADMIN"] = False
-                self.app.rejoin()
-                return
+        elif mtype == "ADMIN":
+            # promote current user to admin
+            print("ADMIN FLAG ENABLED")
+            state["ROOM_ADMIN"] = True
+            self._set_admin_mode(True)
 
-            elif mtype == "ADMIN":
-                # promote current user to admin; switch UI, do NOT call on_show()
-                state["ROOM_ADMIN"] = True
-                self._set_admin_mode(True)
+        elif mtype == "RELOAD":
+            self.chat_rooms = msg.get("CHAT_ROOMS") or self.chat_rooms
 
-            elif mtype == "RELOAD":
-                self.chat_rooms = msg.get("CHAT_ROOMS") or self.chat_rooms
-
-                # After updating chat_rooms, refresh embedded admin list
-                self.chat_room = self.chat_rooms.get(state["ROOM"])
-                self._refresh_admin_list_from_chat_rooms()
+            # After updating chat_rooms, refresh embedded admin list
+            self.chat_room = self.chat_rooms.get(state["ROOM"])
+            self._refresh_admin_list_from_chat_rooms()
 
         self._schedule_poll()
 
