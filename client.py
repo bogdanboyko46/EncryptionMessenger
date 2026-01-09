@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 from protocol import send_message, recv_message
 from tkinter import font
+from client_obj import Client
 
 state = {
 
@@ -150,9 +151,10 @@ def poll_registration(expected_type):
         stash.append(msg)
         
 class ChatGUI(tk.Tk):
-    def __init__(self):
+    def __init__(self, socket):
         super().__init__()
-
+        
+        self.socket = socket
         self.title("Chat Room Messenger")
         self.geometry("975x550")
 
@@ -279,7 +281,10 @@ class ConnectedScene(ttk.Frame):
         reload_btn.place(relx=1.0, rely=0.0, x=-12, y=12, anchor="ne")
 
     def on_show(self):
-        outbox.put({"NAME": state["USER"]})
+        # create client obj
+        client_obj = Client(self.app.socket, state["USER"])
+
+        outbox.put({"NAME": state["USER"], "Client": client_obj})
         self.welcome_label.config(text="Connecting...")
         for w in self.content_frame.winfo_children():
             w.destroy()
@@ -915,7 +920,7 @@ def main():
     outbx_thread.start()
     process_inbox_thread.start()
 
-    app = ChatGUI()
+    app = ChatGUI(s)
     app.mainloop()
 
 if __name__ == "__main__":

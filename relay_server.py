@@ -4,7 +4,7 @@ import socket
 import threading
 from chat_room import chat_room
 from protocol import send_message, recv_message
-from client_info import Client
+from client_obj import Client
 
 HOST = "0.0.0.0"   # Listen on all network interfaces
 PORT = 5000        # Port clients will connect to
@@ -14,7 +14,6 @@ chat_rooms = dict()  # Dictionary to hold chat room instances, maps room name ->
 lock = threading.Lock()
 
 def establish_connection(conn, name):
-
     msg = recv_message(conn)
 
     # recieves the name from the client
@@ -42,7 +41,8 @@ def establish_connection(conn, name):
 
     # receives msg for room assignment
     # assigns the client as a key - value pair in the clients dict
-    clients[name] = Client(conn, name)
+    client_obj = msg.get("Client")
+    clients[name] = client_obj
 
 
 def create_room(room_name, owner, conn, password=None):
@@ -78,7 +78,6 @@ def join_room(room_name, name, chat_rooms, conn, password=None):
     else:
         room.add_user(name)
 
-    
     return True
 
 # the computation for assigning a user to a room, prompts user to join or create one
@@ -122,10 +121,9 @@ def handle_client(conn, addr):
             # waits for message in the main loop
             msg = recv_message(conn)
             
-            print("IS MSG NONE: ",msg is None)
             if msg is None:
                 break
-            print("RECIEVED MSG: ",msg)
+                    
             mType = msg.get("TYPE")
 
             if mType in ("CREATE_ROOM", "JOIN_ROOM"):
@@ -137,7 +135,7 @@ def handle_client(conn, addr):
                     message = msg.get("MESSAGE")
 
                     type = mType if mType == "COMMAND" else "RECEIVE"
-                    
+
                     if chat_room_name in chat_rooms:
                         chat_rooms[chat_room_name].send_message(type, message, clients, from_user=name, chat_rooms=chat_rooms)
                 

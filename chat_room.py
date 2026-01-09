@@ -11,13 +11,23 @@ class chat_room:
         self.users = [name]
         self.has_password = False
         self.ban_list = []
+        self.counter = None # set to none temp
+
+        self.room_state = {
+            "epoch": None,
+            "room_key": None,
+            "send_ctr": None, # <- next outgoing counter
+            "recv_ctr": {
+                name: 0, # <- current user counter
+            },
+        }
 
         if password:
             self.has_password = True
             self.password = password
         
         # The first person in list will be the owner of the room
-
+    
     def get_chat_room_name(self):
         return self.room_name
     
@@ -42,7 +52,7 @@ class chat_room:
         return self.users
     
     def get_owner(self):
-        return self.users[0]
+        return self.admins[0]
 
     # broadcast msg to server, printing that a new user had joined the room, (displays for user that joined too)
     # passes to the send_message function below for slight optimization
@@ -57,9 +67,6 @@ class chat_room:
     def send_message(self, type, message, clients, from_user="", chat_rooms=None):
 
         # edge case where user was able to send a message to the room but not is allowed anymore (kicked or banned)
-        # TEMPORARY FIX
-        if from_user and from_user not in self.users:
-            return
         
         # commands
         if type == "COMMAND":
@@ -138,24 +145,26 @@ class chat_room:
 
                 case "!leave":
                         
-                        self.users.remove(from_user)
+                        
+                        if from_user in self.users:
+                            self.remove_user(from_user)
 
-                        if len(self.users) == 0:
+                            if len(self.users) == 0:
                             # the only user will be an admin, so delete room
 
                             # loop thru clients and remove the room in their history
-                            for client in clients.values():
-                                if self.room_name in client.room_history:
+                                for client in clients.values():
+                                    if self.room_name in client.room_history:
                                 
-                                    client.delete_room_history(self.room_name)
+                                        client.delete_room_history(self.room_name)
                                     
-                            if chat_rooms:
-                                # delete room from server and unassign user from room
-                                del chat_rooms[self.room_name]
+                                if chat_rooms:
+                                    # delete room from server and unassign user from room
+                                    del chat_rooms[self.room_name]
 
-                                # check if the chat room is empty and room from chat rooms if so
-                        else:
-                            if from_user in self.admins:
+                                    # check if the chat room is empty and room from chat rooms if so
+
+                        elif from_user in self.admins:
                                 self.admins.remove(from_user)
 
                                 # the first user in the list becomes admin if admin leaves
@@ -166,11 +175,12 @@ class chat_room:
                                     to_socket = clients[self.users[0]]
                                     send_message(to_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made an admin by an existing admin."})
                                     send_message(to_socket, {"TYPE": "ADMIN"})
+                                    # the next newest admin is considered owner, will handle all E2EE operations
 
                         send_message(clients[from_user].get_socket(), {"TYPE": "REJOIN", "MESSAGE": "You have left the room."})
-
                         # message to the rest of the users that the user has left
                         self.send_message("BROADCAST", f"{from_user} has left the room.", clients, from_user=from_user)
+
                 case "!roomname":
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": f"The room name is: {self.room_name}"})
                 case "!help":
