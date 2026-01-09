@@ -13,7 +13,7 @@ clients = dict()     # dict, maps user name -> client obj
 chat_rooms = dict()  # Dictionary to hold chat room instances, maps room name -> Room instance
 lock = threading.Lock()
 
-def establish_connection(conn, name):
+def establish_connection(conn):
     msg = recv_message(conn)
 
     # recieves the name from the client
@@ -41,8 +41,10 @@ def establish_connection(conn, name):
 
     # receives msg for room assignment
     # assigns the client as a key - value pair in the clients dict
-    client_obj = msg.get("Client")
+    client_obj = Client(conn, name)
     clients[name] = client_obj
+
+    return name
 
 
 def create_room(room_name, owner, conn, password=None):
@@ -55,6 +57,7 @@ def create_room(room_name, owner, conn, password=None):
     
     temp_room = chat_room(room_name, owner, password)
     chat_rooms[room_name] = temp_room
+
     return True
 
 def join_room(room_name, name, chat_rooms, conn, password=None):
@@ -62,7 +65,7 @@ def join_room(room_name, name, chat_rooms, conn, password=None):
     if room_name not in chat_rooms.keys() or name in chat_rooms[room_name].ban_list:
         send_message(conn, {"TYPE": "JOIN_REJECT", "CHAT_ROOMS": chat_rooms, "MESSAGE": "Room does not exist or you are banned from it!"})
         return False
-        
+    
     room = chat_rooms.get(room_name)
         
     if not room:
@@ -76,6 +79,8 @@ def join_room(room_name, name, chat_rooms, conn, password=None):
             return False
         
     else:
+
+        print("ADDED USER!")
         room.add_user(name)
 
     return True
@@ -93,16 +98,22 @@ def assign_room(conn, name, msg):
 
     elif msg and msg.get("TYPE") == "JOIN_ROOM":
         
+        print("LINE 96, ATTEMPTING TO JOIN ROOM!")
         if not join_room(room_name, name, chat_rooms, conn, password=msg.get("PASSWORD")):
+
+            print("FAILED TO JOIN ROOM!")
             return
 
+    print("CONNECTED, SENDING CONNECT MESSAGE!")
     chat_rooms[room_name].broadcast(clients, name)
     send_message(conn, {"TYPE": "CONNECTED", "CHAT_ROOMS": chat_rooms, "ROOM_NAME": room_name})
 
-    # add room to room history
+    print("SENT CONNECTED MESSAGE!")
+    # add room to room history - has access to client_obj file -> client needs to do this themselves -> more privacy
     if room_name not in clients[name].room_history:
         clients[name].add_room_history(room_name)
 
+    print("RETURNING NAME!")
     return room_name
 
 # Every client thats connected to the relay server will have an instance of this (the instance is hosted here ofc)
@@ -110,10 +121,9 @@ def handle_client(conn, addr):
     # prints the ip address of the client that connects to the relay
     print(f"[+] Connected: {addr}")
 
-    name = None
     chat_room_name = None
 
-    establish_connection(conn, name)
+    name = establish_connection(conn)
 
     try:
         while True:
@@ -123,7 +133,7 @@ def handle_client(conn, addr):
             
             if msg is None:
                 break
-                    
+
             mType = msg.get("TYPE")
 
             if mType in ("CREATE_ROOM", "JOIN_ROOM"):
@@ -155,7 +165,7 @@ def handle_client(conn, addr):
         with lock:
             
             # get user room history
-            user_room_history = clients[name].room_history or {}
+            # user_room_history = clients[name].room_history or {}
 
             if name in clients:
                 del clients[name]
@@ -168,7 +178,7 @@ def handle_client(conn, addr):
                     room.send_message("BROADCAST", f"{name} has left the room.", clients, from_user=name)
 
                 # deleted rooms are wiped from a clients history
-                for room in user_room_history:
+                for room in chat_rooms[name].user_room_history:
                     if name in chat_rooms[room].ban_list:
                         chat_rooms[room].ban_list.remove(name)
 

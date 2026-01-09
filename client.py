@@ -37,6 +37,7 @@ def recieving_thread(s):
         # in the case of a null msg sent to socket
         
         if msg is None:
+            print("MESSAGE IS NONE!")
             print("Disconnected from server.")
             state["RUNNING"] = False
             s.close()
@@ -63,6 +64,7 @@ def outbox_thread(s):
         if contents is None or not contents:
             continue
 
+        print(f"SENDING {contents}")
         # else, we send the contents to the relay server
         send_message(s, contents)
 
@@ -77,6 +79,7 @@ def process_inbox(s):
             # gets the type of the message
             mType = msg.get("TYPE")
 
+            print(f"PROCESSING MSG {msg}")
             match mType:
                 
                 case "CONNECTED":
@@ -151,10 +154,9 @@ def poll_registration(expected_type):
         stash.append(msg)
         
 class ChatGUI(tk.Tk):
-    def __init__(self, socket):
+    def __init__(self):
         super().__init__()
         
-        self.socket = socket
         self.title("Chat Room Messenger")
         self.geometry("975x550")
 
@@ -282,9 +284,8 @@ class ConnectedScene(ttk.Frame):
 
     def on_show(self):
         # create client obj
-        client_obj = Client(self.app.socket, state["USER"])
-
-        outbox.put({"NAME": state["USER"], "Client": client_obj})
+        outbox.put({"NAME": state["USER"]})
+        
         self.welcome_label.config(text="Connecting...")
         for w in self.content_frame.winfo_children():
             w.destroy()
@@ -435,7 +436,7 @@ class CreateRoomScene(ttk.Frame):
     def wait_for_room_connect(self):
         if state["IN_ROOM"]:
             # if the in room state becomes true, then we can confirm that the room creation was successful
-            self.app.frame["RoomScene"]._is_admin = True
+            self.app.frame.get("RoomScene")._is_admin = True
             self.app.show("RoomScene")
 
         elif state["ROOM_ACTION_ERROR"]["CREATE_REJECT"]:
@@ -541,6 +542,7 @@ class JoinRoomScene(ttk.Frame):
             self.join_btn.config(state="normal")
 
     def on_room_select(self, event=None):
+        print("543")
         idxs = self.rooms_list.curselection()
         if not idxs:
             return
@@ -563,6 +565,7 @@ class JoinRoomScene(ttk.Frame):
         )
 
         # If no password, clear it and focus join button; otherwise focus password entry
+        print("565")
         self.pass_entry.delete(0, "end")
         if has_pw:
             self.pass_entry.focus_set()
@@ -570,6 +573,7 @@ class JoinRoomScene(ttk.Frame):
             self.join_btn.focus_set()
 
     def on_join(self):
+        print("ON JOIN!")
         if not self.selected_room:
             self.error_label.config(text="Select a room first.")
             return
@@ -592,11 +596,14 @@ class JoinRoomScene(ttk.Frame):
     def wait_for_room_connect(self):
 
         if state["IN_ROOM"]:
+            print("IN ROOM!")
             # if the in room state becomes true, then we can confirm that the room creation was successful
             self.app.show("RoomScene")
             
         elif state["ROOM_ACTION_ERROR"]["JOIN_REJECT"]:
             
+            print("ROOM ERROR JOIN REJECT!")
+
             contents = poll_registration("JOIN_REJECT") or {}
             msg = contents.get("MESSAGE") or "Error"
             self.error_label.config(text=msg)
@@ -606,6 +613,7 @@ class JoinRoomScene(ttk.Frame):
             self.on_room_select()
 
         else:
+            print("LOOP")
             self.after(5, self.wait_for_room_connect)
         
 class RoomScene(ttk.Frame):
@@ -920,7 +928,7 @@ def main():
     outbx_thread.start()
     process_inbox_thread.start()
 
-    app = ChatGUI(s)
+    app = ChatGUI()
     app.mainloop()
 
 if __name__ == "__main__":
