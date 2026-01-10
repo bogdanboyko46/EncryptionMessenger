@@ -7,6 +7,7 @@ import threading
 import queue
 import tkinter as tk
 import client_encryption
+import encryption_helper
 from tkinter import ttk
 from protocol import send_message, recv_message
 from tkinter import font
@@ -40,7 +41,9 @@ def recieving_thread(s):
         msg = recv_message(s)
         # in the case of a null msg sent to socket
         
+
         if msg is None:
+            print("MESSAGE IS NULL!~!!!")
             print("Disconnected from server.")
             state["RUNNING"] = False
             s.close()
@@ -82,9 +85,6 @@ def process_inbox(s):
             # gets the type of the message
             mType = msg.get("TYPE")
 
-            if not state["ROOM"]:
-                break
-
             match mType:
                 
                 case "CONNECTED":
@@ -122,7 +122,7 @@ def process_inbox(s):
                     # All rejoin handling is done within the chat room scene class
 
                 # inbound messages coming from other users in the assigned room / from broadcast
-                case "RECEIVE" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "ADMIN":
+                case "RECEIVE" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "ADMIN" | "ROOM_KEY_WRAP" | "JOIN":
                     
                     # process it in the local queue to print messages from users / print broadcast messages
                     # when registered, make info like chat_rooms and server message accessible by local queue
@@ -143,7 +143,7 @@ def poll_registration(expected_type):
 
     while True:
         try:
-            msg = local.get(timeout=.25)
+            msg = local.get_nowait()
         except queue.Empty:
             # retry
             continue
@@ -171,6 +171,9 @@ class ChatGUI(tk.Tk):
 
     def __init__(self):
         super().__init__()
+
+         # generate necessary client crypto obj
+        self.client_crypto = client_encryption.ClientCrypto()
 
         self.title("Chat Room Messenger")
         self.geometry("975x550")
@@ -298,7 +301,14 @@ class ConnectedScene(ttk.Frame):
         reload_btn.place(relx=1.0, rely=0.0, x=-12, y=12, anchor="ne")
 
     def on_show(self):
-        outbox.put({"NAME": state["USER"]})
+
+        outbox.put({
+            "TYPE": "PUBKEYS",
+            "NAME": state["USER"],
+            "SIGN_PUB": encryption_helper.sign_pub_bytes(self.app.client_crypto.sign_pub),
+            "DH_PUB": encryption_helper.dh_pub_bytes(self.app.client_crypto.dh_pub),
+            })
+        
         self.welcome_label.config(text="Connecting...")
         for w in self.content_frame.winfo_children():
             w.destroy()
@@ -451,7 +461,8 @@ class CreateRoomScene(ttk.Frame):
             # if the in room state becomes true, then we can confirm that the room creation was successful
             state["ROOM"]["ADMIN_FLAG"] = True
             state["ROOM"]["OWNER"] = True
-
+            
+            print("IN ROOM, NOW GOIUNG TO ROOM SCCENE")
             self.app.show("RoomScene")
 
         elif state["ROOM"]["CREATE_REJECT"]:
@@ -639,6 +650,8 @@ class RoomScene(ttk.Frame):
         self.app = app
 
         self.chat_rooms = {} 
+        self.secure_ready = False
+        self._awaiting_wrap = False
 
         # Polling
         self._polling = False
@@ -783,38 +796,30 @@ class RoomScene(ttk.Frame):
 
 
     def on_show(self):
-        """Call this when the app shows this frame."""
-
         room = state["ROOM"]["ROOM_NAME"] or ""
         user = state["USER"] or ""
         self.room_label.config(text=f"Room: {room}")
         self.user_label.config(text=f"User: {user}")
-        
-        # create room crypto and ins as creator if user created the room
+
         self.room_state = client_encryption.RoomCryptoState(state["ROOM"]["OWNER"])
 
-        if state["ROOM"]["OWNER"]:
+        if self.room_state.is_owner:
+            self.secure_ready = True
+            self._awaiting_wrap = False
             self.room_state.ins_as_creator()
         else:
-            self.room_state.ins_as_joiner()
+            self.secure_ready = False
+            self._awaiting_wrap = True
+            self._append_chat("establishing room key")
 
-        self._set_input_enabled(state["IN_ROOM"])
+        # disable send until secure
+        self._set_input_enabled(self.secure_ready)
         self._set_admin_mode(state["ROOM"]["ADMIN_FLAG"])
 
         if not self._polling:
             self._polling = True
             self.entry.focus_set()
             self._schedule_poll()
-
-    def on_hide(self):
-        """Call this when leaving the scene to stop polling cleanly."""
-        self._polling = False
-        if self._poll_job is not None:
-            try:
-                self.after_cancel(self._poll_job)
-            except Exception:
-                pass
-            self._poll_job = None
 
     def _schedule_poll(self):
         self._poll_job = self.after(10, self._poll_inbox)
@@ -841,14 +846,19 @@ class RoomScene(ttk.Frame):
 
         self.entry.delete(0, "end")
 
-        self._append_chat(f"You: {msg}")
+        # discard msgs until secure
+        if not self.secure_ready:
+            # self._append_chat("[SECURE] Message discarded (no room key yet).")
+            return
 
+        # Now safe to send
+        self._append_chat(f"You: {msg}")
         msgtype = "COMMAND" if msg[0] == "!" else "SEND"
 
         if state["ROOM"]["ADMIN_FLAG"] and msg == "!leave":
             self._leave_room()
             return
-        
+
         outbox.put({"TYPE": msgtype, "MESSAGE": msg})
 
     def _refresh_admin_list_from_chat_rooms(self):
@@ -860,7 +870,7 @@ class RoomScene(ttk.Frame):
         if not chat_room:
             return
 
-        users = chat_room.admins
+        users = chat_room.members
         admins = chat_room.admins
         me = state.get("USER")
 
@@ -900,22 +910,44 @@ class RoomScene(ttk.Frame):
     def _poll_inbox(self):
         if not self._polling or not state.get("RUNNING"):
             return
-        
+
         try:
-            msg = local.get(timeout=.01)
+            msg = local.get_nowait()
         except queue.Empty:
             self._schedule_poll()
             return
 
-        if not msg:
-            state["RUNNING"] = False
-            self._append_chat("[SERVER] Disconnected.")
-            self._set_input_enabled(False)
-            self._polling = False
+        mtype = msg.get("TYPE")
+
+        if not self.secure_ready:
+            # Only accept the wrap while waiting
+            if mtype != "ROOM_KEY_WRAP":
+                # discard everything else before key established
+                self._schedule_poll()
+                return
+
+            # Process ROOM_KEY_WRAP
+            result = encryption_helper.receiver_handle_key_wrap(
+                msg,
+                self.app.client_crypto.dh_priv
+            )
+
+            self.room_state.room_key = result["ROOM_KEY"]
+            self.room_state.epoch = result["EPOCH"]
+            self.room_state.send_ctr = 0
+            self.room_state.recv_ctr.clear()
+
+            self.room_state.ins_as_joiner()
+
+            self.secure_ready = True
+            self._awaiting_wrap = False
+
+            self._set_input_enabled(True)
+            self._append_chat("[SECURE] Room key established.")
+            self._schedule_poll()
             return
 
-        mtype = msg.get("TYPE")
-        
+        print("receiving type!!!!!: ",mtype)
         if mtype == "RECEIVE":
             frm = msg.get("FROM", "?")
             text = msg.get("MESSAGE", "")
@@ -935,17 +967,31 @@ class RoomScene(ttk.Frame):
             return
 
         elif mtype == "ADMIN":
-            # promote current user to admin
-            print("ADMIN FLAG ENABLED")
             state["ROOM"]["ADMIN_FLAG"] = True
             self._set_admin_mode(True)
 
         elif mtype == "RELOAD":
             self.chat_rooms = msg.get("CHAT_ROOMS") or self.chat_rooms
-
-            # After updating chat_rooms, refresh embedded admin list
             self.chat_room = self.chat_rooms.get(state["ROOM"]["ROOM_NAME"])
             self._refresh_admin_list_from_chat_rooms()
+
+        elif mtype == "OWNER":
+            self.room_state.is_owner = True
+            self.room_state.rotate_key()
+
+        elif mtype == "JOIN":
+            if not self.room_state.is_owner:
+                self._schedule_poll()
+                return
+
+            print("SENDING OUTBOX!!!!!!!!")
+            outbox.put(encryption_helper.owner_handle_key_wrap(
+                msg,
+                self.app.client_crypto.sign_priv,
+                self.room_state.room_key,
+                state["USER"],
+                self.room_state.epoch
+            ))
 
         self._schedule_poll()
 
@@ -962,9 +1008,6 @@ def main():
     rec_thread.start()
     outbx_thread.start()
     process_inbox_thread.start()
-    
-    # generate necessary client crypto obj
-    client_crypto = client_encryption.ClientCrypto()
     
     app = ChatGUI()
     app.mainloop()

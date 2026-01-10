@@ -6,7 +6,7 @@ class ClientCrypto:
         
         # create sign and dh keys
         self.sign_priv, self.sign_pub = encryption_helper.gen_sign_key_pair()
-        self.ex_priv, self.ex_pub = encryption_helper.gen_dh_key_pair()
+        self.dh_priv, self.dh_pub = encryption_helper.gen_dh_key_pair()
         
         self.peers = {}
 
@@ -20,6 +20,11 @@ class RoomCryptoState:
 
         self.send_ctr: int
         self.recv_ctr: dict[str, int] = {}
+
+        if self.is_owner:
+            self.room_key = os.urandom(32)
+            self.send_ctr = 0
+            self.recv_ctr = {}
 
     def ins_as_creator(self):
         

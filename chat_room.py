@@ -138,6 +138,7 @@ class chat_room:
                         self.members.remove(from_user)
 
                         if from_user in self.admins:
+
                             self.admins.remove(from_user)
 
                             # the first user in the list becomes admin if admin leaves
@@ -148,6 +149,8 @@ class chat_room:
                                 to_socket = clients[self.admins[0]].get_socket()
                                 send_message(to_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made an admin by an existing admin."})
                                 send_message(to_socket, {"TYPE": "ADMIN"})
+                            
+                            # if the user that left was owner, promote the oldest admin to owner
 
                         if len(self.members) == 0:
                             # the only user will be an admin, so delete room
@@ -163,10 +166,12 @@ class chat_room:
                                 del chat_rooms[self.room_name]
 
                                 # check if the chat room is empty and room from chat rooms if so
-                        
-                        if len(self.members) > 0:
+                        else:
+                            
+                            if from_user == self.get_owner():
 
-                            print("BROADCASTING!!!!!!")
+                                send_message(clients[self.admins[0]].get_socket(), {"TYPE": "OWNER"})
+
                             self.send_message("BROADCAST", f"{from_user} has left the room.", clients)
 
                         send_message(clients[from_user].get_socket(), {"TYPE": "REJOIN", "MESSAGE": "You have left the room."})

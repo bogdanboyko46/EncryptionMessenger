@@ -11,7 +11,10 @@ PORT = 5000        # Port clients will connect to
 
 clients = dict()     # dict, maps user name -> client obj
 chat_rooms = dict()  # Dictionary to hold chat room instances, maps room name -> Room instance
+pubkey_dir = dict() # username -> record
 lock = threading.Lock()
+
+
 
 def create_room(room_name, owner, password=None):
     # create a new chat_room obj and assign respective room name to room object
@@ -59,61 +62,75 @@ def assign_room(conn, name, msg):
                 room.add_user(name)
         else:
             return None
-
-    chat_rooms[room_name].broadcast(clients, name)
+        
+        send_message(clients[chat_rooms[room_name].get_owner()].get_socket(), {"TYPE": "JOIN", "NAME": name, "DH_PUB": pubkey_dir[name]["dh_pub"]})
+    
+    # should not be sent before the room key wrap process is complete
+    # chat_rooms[room_name].broadcast(clients, name)
     send_message(conn, {"TYPE": "CONNECTED", "CHAT_ROOMS": chat_rooms, "ROOM_NAME": room_name})
 
     # add room to room history
     if room_name not in clients[name].room_history:
+        print("added to client room history!")
         clients[name].add_room_history(room_name)
-
+    
     return room_name
 
-# Every client thats connected to the relay server will have an instance of this (the instance is hosted here ofc)
-def handle_client(conn, addr):
-    # prints the ip address of the client that connects to the relay
-    print(f"[+] Connected: {addr}")
-
+def establish_connection(conn):
     msg = recv_message(conn)
-    name = None
 
-    # recieves the name from the client
-    if msg:
-        name = msg.get("NAME")
+    if not msg:
+        send_message(conn, {"TYPE": "ERROR", "MESSAGE": "Invalid registration message"})
+        conn.close()
+        return None
+    
+    if msg.get("TYPE") != "PUBKEYS":
+        send_message(conn, {"TYPE":"ERROR","MESSAGE":"Expected PUBKEYS registration"})
+        conn.close()
+        return None
 
-    # if the name is empty, then it closes the TCP socket of that client and returns
+    name = msg.get("NAME")
     if not name:
         send_message(conn, {"TYPE": "ERROR", "MESSAGE": "Invalid registration message"})
         conn.close()
-        return
-        
-    # checks if the name is already taken, gives an "ERROR" type message
+        return None
+    
+
     if name in clients:
         send_message(conn, {"TYPE": "ERROR", "MESSAGE": "Name already taken"})
         conn.close()
+        return None
+
+    sign_pub = msg.get("SIGN_PUB")
+    dh_pub = msg.get("DH_PUB")
+
+    pubkey_dir[name] = {"sign_pub": sign_pub, "dh_pub": dh_pub}
+
+    send_message(conn, {
+        "TYPE": "REGISTRATION",
+        "CHAT_ROOMS": chat_rooms,
+        "MESSAGE": f"Welcome to the chat room server, {name}!"
+    })
+
+    clients[name] = Client(conn, name)
+    return name
+
+# Every client thats connected to the relay server will have an instance of this (the instance is hosted here ofc)
+def handle_client(conn, addr):
+    print(f"[+] Connected: {addr}")
+
+    name = establish_connection(conn)
+    if name is None:
         return
 
-    # send message with chat_room info
-    send_message(conn, {"TYPE": "REGISTRATION", "CHAT_ROOMS": chat_rooms, "MESSAGE": f"Welcome to the chat room server, {name}!"})
-
-    # receives msg for room assignment
-    # assigns the client as a key - value pair in the clients dict
-    clients[name] = Client(conn, name)
     chat_room_name = None
 
-    # maps client name -> client object
-
-    # broadcasts user to room regardless if they created it or joined
     try:
         while True:
-           
-            # waits for message in the main loop
             msg = recv_message(conn)
-            
-            print("IS MSG NONE: ",msg is None)
             if msg is None:
                 break
-            print("RECIEVED MSG: ",msg)
+
             mType = msg.get("TYPE")
 
             if mType in ("CREATE_ROOM", "JOIN_ROOM"):
@@ -129,8 +146,21 @@ def handle_client(conn, addr):
                 
                 case "RELOAD":
                     # send the client the current chat rooms
+                    print("SENDING!")
                     send_message(conn, {"TYPE": "RELOAD", "CHAT_ROOMS": chat_rooms})
-                
+
+                case "ROOM_KEY_WRAP":
+                    # reroute to the respective user
+
+                    print("GOT!!")
+                    
+                    TO = msg.get("TO")
+
+                    if TO in clients:
+
+                        msg["PUBKEY_DIR"] = pubkey_dir
+                        send_message(clients[msg.get("TO")].get_socket(), msg)
+
                 case "DISCONNECT":
                     break
 
@@ -142,8 +172,12 @@ def handle_client(conn, addr):
         # cleanup on disconnect
         with lock:
             
+            # delete name from pubkey directory
+            if name in pubkey_dir:
+                del pubkey_dir[name]
+
             # get user room history
-            user_room_history = clients[name].room_history or {}
+            # user_room_history = clients[name].room_history or {}
 
             if name in clients:
                 del clients[name]
@@ -156,9 +190,9 @@ def handle_client(conn, addr):
                     room.send_message("BROADCAST", f"{name} has left the room.", clients, from_user=name)
 
                 # deleted rooms are wiped from a clients history
-                for room in user_room_history:
-                    if name in chat_rooms[room].ban_list:
-                        chat_rooms[room].ban_list.remove(name)
+                # for room in user_room_history:
+                    # if name in chat_rooms[room].ban_list:
+                        # chat_rooms[room].ban_list.remove(name)
 
                 if len(chat_rooms[chat_room_name].members) == 0:
                     del chat_rooms[chat_room_name]
