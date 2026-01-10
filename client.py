@@ -848,7 +848,6 @@ class RoomScene(ttk.Frame):
 
         # discard msgs until secure
         if not self.secure_ready:
-            # self._append_chat("[SECURE] Message discarded (no room key yet).")
             return
 
         # Now safe to send
@@ -859,7 +858,23 @@ class RoomScene(ttk.Frame):
             self._leave_room()
             return
 
-        outbox.put({"TYPE": msgtype, "MESSAGE": msg})
+        # do not encrypt the message if its a command
+        if msgtype == "COMMAND":
+            outbox.put({"TYPE": "COMMAND", "MESSAGE": msg})
+            return
+        
+        # encrypt message
+        secure_send = encryption_helper.encrypt_room_msg(
+            self.room_state.room_key,
+            self.room_state.epoch,
+            self.room_state.send_ctr,
+            msg,
+            state["USER"],
+            msgtype,
+        )
+
+        self.room_state.send_ctr += 1
+        outbox.put(secure_send)
 
     def _refresh_admin_list_from_chat_rooms(self):
         room_name = state["ROOM"]["ROOM_NAME"]
@@ -879,8 +894,8 @@ class RoomScene(ttk.Frame):
         for u in users:
             if u == me or u in admins:
                 continue
-
-            #  mark admins
+            
+            # no actions can be performed on an admin
             self._admin_list.insert("end", u)
 
     def _get_selected_users(self):
@@ -895,11 +910,13 @@ class RoomScene(ttk.Frame):
 
         # You are using command messages; keep that pattern:
         for user in users:
-            outbox.put({"TYPE": "COMMAND", "MESSAGE": f"!{action_type} {user}"})
+            outbox.put({"TYPE": "COMMAND", "MESSAGE": f"{action_type} {user}"})
 
         self._append_chat(f"[ADMIN] Sent {action_type} for: {', '.join(users)}")
 
     def _leave_room(self):
+        
+        # do not encrypt leave message
         outbox.put({"TYPE": "COMMAND", "MESSAGE": "!leave"})
         state["ROOM"]["ADMIN_FLAG"] = False
         state["ROOM"]["OWNER"] = False
@@ -907,6 +924,21 @@ class RoomScene(ttk.Frame):
         self._set_admin_mode(False)
         # return to connected scene
 
+    def handle_decrypt(self, msg):
+
+        if msg["EPOCH"] != self.room_state.epoch:
+            print("INVALID MSG.. DISCARDING")
+            self._schedule_poll()
+            return
+        
+        decrypted_msg = encryption_helper.decrypt_room_message(
+                self.room_state.room_key,
+                msg,
+                self.room_state.recv_ctr,
+            )
+
+        self._append_chat(f"{msg["FROM"]: {decrypted_msg}}")
+        
     def _poll_inbox(self):
         if not self._polling or not state.get("RUNNING"):
             return
@@ -947,17 +979,16 @@ class RoomScene(ttk.Frame):
             self._schedule_poll()
             return
 
-        print("receiving type!!!!!: ",mtype)
         if mtype == "RECEIVE":
-            frm = msg.get("FROM", "?")
-            text = msg.get("MESSAGE", "")
-            self._append_chat(f"{frm}: {text}")
+            # encrypted
+            self.handle_decrypt(msg)
 
         elif mtype == "BROADCAST":
-            text = msg.get("MESSAGE", "")
-            self._append_chat(f"[BROADCAST] {text}")
+            # not encrypted
+            self._append_chat(f"[BROADCAST] {msg.get("MESSAGE")}")
 
         elif mtype == "REJOIN":
+            # not encrypted
             text = msg.get("MESSAGE", "")
             self._append_chat(f"[BROADCAST] {text}")
             self._set_input_enabled(False)
@@ -967,24 +998,29 @@ class RoomScene(ttk.Frame):
             return
 
         elif mtype == "ADMIN":
+            # not encrypted
             state["ROOM"]["ADMIN_FLAG"] = True
             self._set_admin_mode(True)
 
         elif mtype == "RELOAD":
+            # not encrypted
             self.chat_rooms = msg.get("CHAT_ROOMS") or self.chat_rooms
             self.chat_room = self.chat_rooms.get(state["ROOM"]["ROOM_NAME"])
             self._refresh_admin_list_from_chat_rooms()
 
         elif mtype == "OWNER":
+            # not encrypted
             self.room_state.is_owner = True
             self.room_state.rotate_key()
 
         elif mtype == "JOIN":
+
+            # encrypted
+            
             if not self.room_state.is_owner:
                 self._schedule_poll()
                 return
 
-            print("SENDING OUTBOX!!!!!!!!")
             outbox.put(encryption_helper.owner_handle_key_wrap(
                 msg,
                 self.app.client_crypto.sign_priv,
