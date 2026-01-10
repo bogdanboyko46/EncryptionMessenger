@@ -20,9 +20,10 @@ def create_room(room_name, owner, password=None):
     if room_name in chat_rooms:
         send_message(clients[owner].get_socket(), {"TYPE": "CREATE_REJECT", "MESSAGE": "Room already exists!"})
         return False
-    
+
     temp_room = chat_room(room_name, owner, password)
     chat_rooms[room_name] = temp_room
+
     return True
     # Prints out the room name and its creator
 
@@ -51,7 +52,7 @@ def assign_room(conn, name, msg):
                 room.add_user(name, conn, msg.get("PASSWORD"))
 
                 # if user ended up not being in the room because of an incorrect password, we can apply a simple check to break out of the function
-                if not name in room.users:
+                if not name in room.members:
                     return None
                 
             else:
@@ -150,7 +151,7 @@ def handle_client(conn, addr):
             # if the user was in a room, remove them from it
             if chat_room_name and chat_room_name in chat_rooms:
                 room = chat_rooms[chat_room_name]
-                if name in room.users:
+                if name in room.members:
                     room.remove_user(name)
                     room.send_message("BROADCAST", f"{name} has left the room.", clients, from_user=name)
 
@@ -159,7 +160,7 @@ def handle_client(conn, addr):
                     if name in chat_rooms[room].ban_list:
                         chat_rooms[room].ban_list.remove(name)
 
-                if len(chat_rooms[chat_room_name].users) == 0:
+                if len(chat_rooms[chat_room_name].members) == 0:
                     del chat_rooms[chat_room_name]
                     print(f"[+] Room '{chat_room_name}' deleted due to no users remaining.")
             # send a message to the rest of the users that the user has left

@@ -2,24 +2,32 @@
 # It refers to the bytes sent between clients & relay_server, these messages for most part contain 
 # socket & a map of instructions
 
-import time
 import socket
 import threading
 import queue
 import tkinter as tk
+import client_encryption
 from tkinter import ttk
 from protocol import send_message, recv_message
 from tkinter import font
 
+
 state = {
     "RUNNING": True,
     "IN_ROOM": False,
-    "ROOM": None,
     "USER": None, 
-    "JOIN_REJECT": False,
-    "CREATE_REJECT": False,
-    "ROOM_ADMIN": False,
+
+    "ROOM": {
+        "ROOM_NAME": None,
+        "ADMIN_FLAG": False,
+
+        "JOIN_REJECT": False,
+        "CREATE_REJECT": False,
+
+        "OWNER": False
+    },
 }
+
 
 inbox = queue.Queue()   # messages from server (dicts)
 outbox = queue.Queue()  # messages to be sent to relay server (dicts)
@@ -58,7 +66,8 @@ def outbox_thread(s):
         # invalid contents if condition passes; either null or contains nothing
         if contents is None or not contents:
             continue
-
+        
+        print(f"SENDING {contents}")
         # else, we send the contents to the relay server
         send_message(s, contents)
 
@@ -73,13 +82,17 @@ def process_inbox(s):
             # gets the type of the message
             mType = msg.get("TYPE")
 
+            if not state["ROOM"]:
+                break
+
             match mType:
                 
                 case "CONNECTED":
 
                     # we are connected!
                     state["IN_ROOM"] = True
-                    state["ROOM"] = msg.get("ROOM_NAME")
+
+                    state["ROOM"]["ROOM_NAME"] = msg.get("ROOM_NAME")
 
                 # message type that indicates a logic error
                 case "ERROR":
@@ -101,7 +114,7 @@ def process_inbox(s):
 
                     # unassign user flags
                     state["IN_ROOM"] = False
-                    state["ROOM"] = None
+                    state["ROOM"]["ROOM_NAME"] = None
                     
                     # PRINT SERVER MESSAGE TO USER - PROVIDE CHAT_ROOMS
                     local.put(msg)
@@ -118,7 +131,7 @@ def process_inbox(s):
                 case "JOIN_REJECT" | "CREATE_REJECT":
                     # set error flag to true
                     
-                    state[mType] = True
+                    state["ROOM"][mType] = True
                     local.put(msg)
 
         except queue.Empty:
@@ -436,17 +449,19 @@ class CreateRoomScene(ttk.Frame):
     def wait_for_room_connect(self):
         if state["IN_ROOM"]:
             # if the in room state becomes true, then we can confirm that the room creation was successful
-            state["ROOM_ADMIN"] = True
+            state["ROOM"]["ADMIN_FLAG"] = True
+            state["ROOM"]["OWNER"] = True
+
             self.app.show("RoomScene")
 
-        elif state["CREATE_REJECT"]:
+        elif state["ROOM"]["CREATE_REJECT"]:
             
             contents = poll_registration("CREATE_REJECT") or {}
             msg = contents.get("MESSAGE") or "Error"
             self.error_label.config(text=msg)
 
             # set error flag back to false
-            state["CREATE_REJECT"] = False
+            state["ROOM"]["CREATE_REJECT"] = False
             self.on_show()
 
         else:
@@ -596,14 +611,14 @@ class JoinRoomScene(ttk.Frame):
             # if the in room state becomes true, then we can confirm that the room creation was successful
             self.app.show("RoomScene")
 
-        elif state["JOIN_REJECT"]:
+        elif state["ROOM"]["JOIN_REJECT"]:
             
             contents = poll_registration("JOIN_REJECT") or {}
             msg = contents.get("MESSAGE") or "Error"
             self.error_label.config(text=msg)
 
             # set error flag back to false
-            state["JOIN_REJECT"] = False
+            state["ROOM"]["JOIN_REJECT"] = False
             self.on_room_select()
 
         else:
@@ -676,6 +691,9 @@ class RoomScene(ttk.Frame):
 
         # Start on main view
         self._show_admin_main_view()
+
+        # initially set to false
+        self.room_state = client_encryption.RoomCryptoState(False)
 
         input_frame = ttk.Frame(self)
         input_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(10, 20))
@@ -766,13 +784,22 @@ class RoomScene(ttk.Frame):
 
     def on_show(self):
         """Call this when the app shows this frame."""
-        room = state.get("ROOM") or ""
-        user = state.get("USER") or ""
+
+        room = state["ROOM"]["ROOM_NAME"] or ""
+        user = state["USER"] or ""
         self.room_label.config(text=f"Room: {room}")
         self.user_label.config(text=f"User: {user}")
+        
+        # create room crypto and ins as creator if user created the room
+        self.room_state = client_encryption.RoomCryptoState(state["ROOM"]["OWNER"])
 
-        self._set_input_enabled(bool(state.get("IN_ROOM")))
-        self._set_admin_mode(bool(state.get("ROOM_ADMIN")))
+        if state["ROOM"]["OWNER"]:
+            self.room_state.ins_as_creator()
+        else:
+            self.room_state.ins_as_joiner()
+
+        self._set_input_enabled(state["IN_ROOM"])
+        self._set_admin_mode(state["ROOM"]["ADMIN_FLAG"])
 
         if not self._polling:
             self._polling = True
@@ -817,10 +844,15 @@ class RoomScene(ttk.Frame):
         self._append_chat(f"You: {msg}")
 
         msgtype = "COMMAND" if msg[0] == "!" else "SEND"
+
+        if state["ROOM"]["ADMIN_FLAG"] and msg == "!leave":
+            self._leave_room()
+            return
+        
         outbox.put({"TYPE": msgtype, "MESSAGE": msg})
 
     def _refresh_admin_list_from_chat_rooms(self):
-        room_name = state.get("ROOM")
+        room_name = state["ROOM"]["ROOM_NAME"]
         if not room_name:
             return
 
@@ -828,7 +860,7 @@ class RoomScene(ttk.Frame):
         if not chat_room:
             return
 
-        users = chat_room.users
+        users = chat_room.admins
         admins = chat_room.admins
         me = state.get("USER")
 
@@ -859,7 +891,8 @@ class RoomScene(ttk.Frame):
 
     def _leave_room(self):
         outbox.put({"TYPE": "COMMAND", "MESSAGE": "!leave"})
-        state["ROOM_ADMIN"] = False
+        state["ROOM"]["ADMIN_FLAG"] = False
+        state["ROOM"]["OWNER"] = False
         self._set_input_enabled(False)
         self._set_admin_mode(False)
         # return to connected scene
@@ -882,7 +915,7 @@ class RoomScene(ttk.Frame):
             return
 
         mtype = msg.get("TYPE")
-
+        
         if mtype == "RECEIVE":
             frm = msg.get("FROM", "?")
             text = msg.get("MESSAGE", "")
@@ -897,21 +930,21 @@ class RoomScene(ttk.Frame):
             self._append_chat(f"[BROADCAST] {text}")
             self._set_input_enabled(False)
             self._polling = False
-            state["ROOM_ADMIN"] = False
+            state["ROOM"]["ADMIN_FLAG"] = False
             self.app.rejoin()
             return
 
         elif mtype == "ADMIN":
             # promote current user to admin
             print("ADMIN FLAG ENABLED")
-            state["ROOM_ADMIN"] = True
+            state["ROOM"]["ADMIN_FLAG"] = True
             self._set_admin_mode(True)
 
         elif mtype == "RELOAD":
             self.chat_rooms = msg.get("CHAT_ROOMS") or self.chat_rooms
 
             # After updating chat_rooms, refresh embedded admin list
-            self.chat_room = self.chat_rooms.get(state["ROOM"])
+            self.chat_room = self.chat_rooms.get(state["ROOM"]["ROOM_NAME"])
             self._refresh_admin_list_from_chat_rooms()
 
         self._schedule_poll()
@@ -929,7 +962,10 @@ def main():
     rec_thread.start()
     outbx_thread.start()
     process_inbox_thread.start()
-
+    
+    # generate necessary client crypto obj
+    client_crypto = client_encryption.ClientCrypto()
+    
     app = ChatGUI()
     app.mainloop()
 
