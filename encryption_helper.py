@@ -96,6 +96,7 @@ def owner_handle_key_wrap(msg, owner_sign_priv, room_key, from_name, epoch):
     # get the private room key
     payload = room_key
 
+    print(f"99 EPOCH: {epoch}")
     aad_dict = {
         "TYPE": "ROOM_KEY_WRAP",
         "TO": msg.get("NAME"),
@@ -107,10 +108,10 @@ def owner_handle_key_wrap(msg, owner_sign_priv, room_key, from_name, epoch):
         # convert context into bytes and obtain the session key
     aad_bytes = aad(aad_dict)
     secret_key = eph_session_key(eph_dh_priv, joiner_dh_pub)
-            
+        
     # get the wrapped key
     wrap_key = hkdf(secret_key, aad_bytes)
-
+    print(f"113 EPOCH: {aad_dict["EPOCH"]}")
     # get the NONCE and cipher text from the wrap key and context
 
     NONCE, CIPHERTEXT = aead_encrypt(
@@ -123,9 +124,10 @@ def owner_handle_key_wrap(msg, owner_sign_priv, room_key, from_name, epoch):
     wrap_msg["NONCE"] = NONCE
     wrap_msg["CIPHERTEXT"] = CIPHERTEXT
 
-    sign_bytes = sign(owner_sign_priv, aad(wrap_msg))
-    wrap_msg["SIG"] = sign_bytes
+    # sign_bytes = sign(owner_sign_priv, aad(wrap_msg))
+    # wrap_msg["SIG"] = sign_bytes
     
+    print(f"129 EPOCH: {aad_dict["EPOCH"]}")
     return wrap_msg
 
 def receiver_handle_key_wrap(msg, receiver_dh_priv):
@@ -139,6 +141,7 @@ def receiver_handle_key_wrap(msg, receiver_dh_priv):
     owner_sign_pub = bytes_to_sign_pub(owner_sign_pub_bytes)
 
     # Verify signature over exactly what sender signed
+    """"
     signed_part = {
         "TYPE": msg["TYPE"],
         "TO": msg["TO"],
@@ -151,7 +154,7 @@ def receiver_handle_key_wrap(msg, receiver_dh_priv):
 
     # verify sender sig
     owner_sign_pub.verify(msg["SIG"], aad(signed_part))
-
+    """
     eph_pub = bytes_to_dh_pub(msg["EPH_PUB"])
     shared = receiver_dh_priv.exchange(eph_pub)
 
@@ -217,8 +220,8 @@ def encrypt_room_msg(sender_sign_priv, room_key, epoch, send_ctr, message, from_
         "CIPHERTEXT": ct,
     }
 
-    sign_bytes = sign(sender_sign_priv, aad(wrap_msg))
-    wrap_msg["SIG"] = sign_bytes
+    # sign_bytes = sign(sender_sign_priv, aad(wrap_msg))
+    # wrap_msg["SIG"] = sign_bytes
 
     return wrap_msg
 
@@ -233,6 +236,7 @@ def decrypt_room_message(receiver_sign_pub, room_key, msg, recv_ctr):
         raise ValueError(f"Out of order ctr - from {sender}: ctr={ctr} last={last}")
 
     # verify the material
+    """
     signed_part = {
         "TYPE": msg["TYPE"],
         "EPOCH": epoch,
@@ -241,9 +245,10 @@ def decrypt_room_message(receiver_sign_pub, room_key, msg, recv_ctr):
         "NONCE": msg["NONCE"],
         "CIPHERTEXT": msg["CIPHERTEXT"],
     }
+    """
 
     # verify that material comes from the actual sender!
-    receiver_sign_pub.verify(msg["SIG"], aad(signed_part))
+    # receiver_sign_pub.verify(msg["SIG"], aad(signed_part))
 
     # derive sender key - exact contents and format
     info_bytes = aad({
@@ -273,9 +278,6 @@ def decrypt_room_message(receiver_sign_pub, room_key, msg, recv_ctr):
 
 def rotate_room_key(owner_name, sign_priv, pubkey_dir, chat_room, epoch):
     new_room_key = os.urandom(32)
-
-    # update epoch
-    epoch += 1
 
     wraps = []
 

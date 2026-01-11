@@ -75,7 +75,7 @@ def assign_room(conn, name, msg):
     if mtype == "JOIN_ROOM":
         send_message(clients[chat_rooms[room_name].get_owner()].get_socket(), {
             "TYPE": "ROTATE", 
-            "PUBLIC_DIR": pubkey_dir, 
+            "PUBKEY_DIR": pubkey_dir, 
             "CHAT_ROOM": chat_rooms[room_name]
             })
 

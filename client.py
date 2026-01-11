@@ -83,7 +83,6 @@ def process_inbox(s):
             # gets the type of the message
             mType = msg.get("TYPE")
 
-            print("PROCESSING::::: ",msg)
             match mType:
                 
                 # message type that indicates a logic error
@@ -114,7 +113,7 @@ def process_inbox(s):
                     # All rejoin handling is done within the chat room scene class
 
                 # inbound messages coming from other users in the assigned room / from broadcast
-                case "SEND" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "ADMIN" | "ROOM_KEY_WRAP" | "ROTATE":
+                case "SEND" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "ADMIN" | "ROTATE":
                     
                     # process it in the local queue to print messages from users / print broadcast messages
                     # when registered, make info like chat_rooms and server message accessible by local queue
@@ -132,10 +131,11 @@ def process_inbox(s):
 
                     state["IN_ROOM"] = True
                     state["ROOM"]["ROOM_NAME"] = room.get_chat_room_name()
-
-                    if room.get_owner() != state["USER"]:
-                        # rotate key as someone new has joined
-                        state["ROOM"]["ADMIN_FLAG"] = True
+                
+                case "ROOM_KEY_WRAP":
+                    state["ROOM"]["ROTATE_FLAG"] = True
+                    
+                    local.put(msg)
 
         except queue.Empty:
             pass
@@ -819,7 +819,8 @@ class RoomScene(ttk.Frame):
 
 
     def on_send(self, event=None):
-        if not state.get("IN_ROOM"):
+
+        if not state.get("IN_ROOM") or self.room_state.epoch is None:
             return
 
         msg = self.entry.get().strip()
@@ -908,18 +909,20 @@ class RoomScene(ttk.Frame):
         # return to connected scene
 
     def handle_decrypt(self, msg):
-
+        print("910")
         if msg["EPOCH"] != self.room_state.epoch:
+            print(f"EPOCH IS NOT ROOM EPOCH!!! SENDER EPOCH: {msg["EPOCH"]} - YOUR EPOCH: {self.room_state.epoch}")
             self._schedule_poll()
             return
         
         decrypted_msg = encryption_helper.decrypt_room_message(
-                self.app.client_crypto.sign_pub,
+                self.app.client_crypto.sign_priv,
                 self.room_state.room_key,
                 msg,
                 self.room_state.recv_ctr,
             )
-
+        
+        print("DECRYPTIUNG!!!!!!!!!!!!!!!!!!!")
         self._append_chat(f"{msg["FROM"]}: {decrypted_msg}")
         
     def _poll_inbox(self):
@@ -934,6 +937,7 @@ class RoomScene(ttk.Frame):
 
         mtype = msg.get("TYPE")
 
+        print(f"RECEIVED IN ROOMSCENE THREAD! TYYPE {mtype}")
         # check for room key flag
         if state["ROOM"]["ROTATE_FLAG"]:
              
@@ -953,6 +957,7 @@ class RoomScene(ttk.Frame):
                     )
                 self.room_state.ins_as_joiner()
 
+                print(f"THE RESULT EPOCH IS {result["EPOCH"]}")
                 self.room_state.set_room_key(result["ROOM_KEY"])
                 self.room_state.epoch = result["EPOCH"]
                 self.room_state.send_ctr = 0
@@ -969,6 +974,7 @@ class RoomScene(ttk.Frame):
             return
 
         if mtype == "SEND": # receiving type SEND message
+            print("TYPE SEND!!!!")
             # encrypted
             self.handle_decrypt(msg)
 
@@ -1004,13 +1010,10 @@ class RoomScene(ttk.Frame):
 
         elif self.room_state.is_owner:
             
-            print("IS OWNER!!!!!!!")
             # JOIN was replaced with ROTATE - will be called once someone joins, leaves, or rotates owner
             if mtype == "ROTATE":
                 
-                print("ROTATE REACFHEDD!!!!!!!!")
-                if self.room_state.epoch:
-                    self.room_state.epoch += 1
+                self.room_state.epoch = self.room_state.epoch + 1 if self.room_state.epoch else 0
 
                 new_room_key, wraps = encryption_helper.rotate_room_key(
                     state["USER"],
@@ -1025,7 +1028,8 @@ class RoomScene(ttk.Frame):
                 # send wrapped room key to everyone  else
                 for wrap in wraps:
                     outbox.put(wrap)
-
+            
+            print(f"AFTER OPERATION EPOCH: {self.room_state.epoch}")
         self._schedule_poll()
 
 def main():
