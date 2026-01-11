@@ -14,8 +14,6 @@ chat_rooms = dict()  # Dictionary to hold chat room instances, maps room name ->
 pubkey_dir = dict() # username -> record
 lock = threading.Lock()
 
-
-
 def create_room(room_name, owner, password=None):
     # create a new chat_room obj and assign respective room name to room object
 
@@ -35,13 +33,19 @@ def assign_room(conn, name, msg):
     room_name = msg["ROOM_NAME"] if msg else None
 
     # handles whether the client wants to join or create a room
-    if msg and msg.get("TYPE") == "CREATE_ROOM":
+
+    if not msg:
+        return
+    
+    mtype = msg.get("TYPE")
+
+    if mtype == "CREATE_ROOM":
         
         # if a room was not able to be created, we return and do not create new room
         if not create_room(room_name, name, msg.get("PASSWORD")):
             return
 
-    elif msg and msg.get("TYPE") == "JOIN_ROOM":
+    elif mtype == "JOIN_ROOM":
         # if user intends to join a room, it utilizes the add_user() function and adds the respective user
         
         # handles if the user is banned from the room or if the room does not exist
@@ -63,15 +67,20 @@ def assign_room(conn, name, msg):
         else:
             return None
         
-        send_message(clients[chat_rooms[room_name].get_owner()].get_socket(), {"TYPE": "JOIN", "NAME": name, "DH_PUB": pubkey_dir[name]["dh_pub"]})
-    
-    # should not be sent before the room key wrap process is complete
-    # chat_rooms[room_name].broadcast(clients, name)
-    send_message(conn, {"TYPE": "CONNECTED", "CHAT_ROOMS": chat_rooms, "ROOM_NAME": room_name})
+        # rotate key process -> send to owner, gen new room key and distribute to everyone   
+
+    send_message(conn, {"TYPE": "CONNECTED", "CHAT_ROOM": chat_rooms[room_name]})
+
+    # send rotate msg to owner
+    if mtype == "JOIN_ROOM":
+        send_message(clients[chat_rooms[room_name].get_owner()].get_socket(), {
+            "TYPE": "ROTATE", 
+            "PUBLIC_DIR": pubkey_dir, 
+            "CHAT_ROOM": chat_rooms[room_name]
+            })
 
     # add room to room history
     if room_name not in clients[name].room_history:
-        print("added to client room history!")
         clients[name].add_room_history(room_name)
     
     return room_name
@@ -139,16 +148,22 @@ def handle_client(conn, addr):
             match mType:
                 case "SEND":
                     # message is encrypted, route the message to the users in the chat room
-                    chat_rooms[chat_room_name].send_cipher_message(msg, clients)
+                    print("CIPHER TEXT: ",msg["CIPHERTEXT"])
+                    chat_rooms[chat_room_name].handle_normal_message(msg, clients)
                 
                 case "COMMAND":
                     
                     # commands are NOT encrypted
-                    chat_rooms[chat_room_name].handle_command(mType, msg.get("MESSAGE"), clients, from_user=name)
+                    chat_rooms[chat_room_name].handle_command(
+                        mType, 
+                        msg.get("MESSAGE"), 
+                        clients, from_user=name, 
+                        chat_rooms=chat_rooms, 
+                        pubkey_dir=pubkey_dir
+                        )
 
                 case "RELOAD":
                     # send the client the current chat rooms
-                    print("SENDING!")
                     send_message(conn, {"TYPE": "RELOAD", "CHAT_ROOMS": chat_rooms})
 
                 case "ROOM_KEY_WRAP":
@@ -189,7 +204,7 @@ def handle_client(conn, addr):
                 room = chat_rooms[chat_room_name]
                 if name in room.members:
                     room.remove_user(name)
-                    room.send_message("BROADCAST", f"{name} has left the room.", clients, from_user=name)
+                    room.handle_command("BROADCAST", f"{name} has left the room.", clients, from_user=name)
 
                 # deleted rooms are wiped from a clients history
                 # for room in user_room_history:

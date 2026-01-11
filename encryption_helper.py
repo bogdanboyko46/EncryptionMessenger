@@ -112,6 +112,7 @@ def owner_handle_key_wrap(msg, owner_sign_priv, room_key, from_name, epoch):
     wrap_key = hkdf(secret_key, aad_bytes)
 
     # get the NONCE and cipher text from the wrap key and context
+
     NONCE, CIPHERTEXT = aead_encrypt(
         wrap_key,
         payload,
@@ -175,7 +176,7 @@ def receiver_handle_key_wrap(msg, receiver_dh_priv):
 
     return {"ROOM_KEY": room_key, "EPOCH": msg["EPOCH"]}
 
-def encrypt_room_msg(room_key, epoch, send_ctr, message, from_user, msg_type):
+def encrypt_room_msg(sender_sign_priv, room_key, epoch, send_ctr, message, from_user, msg_type):
 
     info = {
         "FROM": from_user,
@@ -207,7 +208,7 @@ def encrypt_room_msg(room_key, epoch, send_ctr, message, from_user, msg_type):
     # encrypt
     ct = AESGCM(msg_key).encrypt(nonce, payload, aad_bytes)
 
-    return {
+    wrap_msg = {
         "TYPE": msg_type,
         "EPOCH": epoch,
         "CTR": send_ctr,
@@ -216,8 +217,13 @@ def encrypt_room_msg(room_key, epoch, send_ctr, message, from_user, msg_type):
         "CIPHERTEXT": ct,
     }
 
+    sign_bytes = sign(sender_sign_priv, aad(wrap_msg))
+    wrap_msg["SIG"] = sign_bytes
 
-def decrypt_room_message(room_key, msg, recv_ctr):
+    return wrap_msg
+
+
+def decrypt_room_message(receiver_sign_pub, room_key, msg, recv_ctr):
     sender = msg["FROM"]
     epoch = msg["EPOCH"]
     ctr = msg["CTR"]
@@ -226,7 +232,18 @@ def decrypt_room_message(room_key, msg, recv_ctr):
     if ctr <= last:
         raise ValueError(f"Out of order ctr - from {sender}: ctr={ctr} last={last}")
 
-    room = msg["ROOM"]
+    # verify the material
+    signed_part = {
+        "TYPE": msg["TYPE"],
+        "EPOCH": epoch,
+        "CTR": ctr,
+        "FROM": sender,
+        "NONCE": msg["NONCE"],
+        "CIPHERTEXT": msg["CIPHERTEXT"],
+    }
+
+    # verify that material comes from the actual sender!
+    receiver_sign_pub.verify(msg["SIG"], aad(signed_part))
 
     # derive sender key - exact contents and format
     info_bytes = aad({
@@ -252,5 +269,36 @@ def decrypt_room_message(room_key, msg, recv_ctr):
     # parse payload
     payload = json.loads(pt.decode("utf-8"))
     recv_ctr[sender] = ctr
-    
     return payload["MESSAGE"]
+
+def rotate_room_key(owner_name, sign_priv, pubkey_dir, chat_room, epoch):
+    new_room_key = os.urandom(32)
+
+    # update epoch
+    epoch += 1
+
+    wraps = []
+
+    # msg, owner_sign_priv, room_key, from_name, epoch
+
+    for mem in chat_room.members:
+        
+        if mem is chat_room.get_owner():
+            continue
+
+        user_info = {
+            "DH_PUB": pubkey_dir[mem]["dh_pub"],
+            "NAME": mem,
+        }
+
+        wrap = owner_handle_key_wrap(
+            user_info,
+            sign_priv,
+            new_room_key,
+            owner_name,
+            epoch
+        )
+
+        wraps.append(wrap)
+    
+    return new_room_key, wraps

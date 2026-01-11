@@ -64,10 +64,11 @@ class chat_room:
 
             send_message(clients[client].get_socket(), msg)
     
-    def handle_command(self, type, message, clients, from_user="", chat_rooms=None):
-        
+    def handle_command(self, type, message, clients, from_user="", chat_rooms=None, pubkey_dir=None):
+
         # commands
         if type == "COMMAND":
+
             msglist = message.split(" ")
             command = msglist[0]
 
@@ -88,7 +89,10 @@ class chat_room:
                 if command in ("!remove", "!makeadmin", "!ban"):
                     send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": "Invalid command format."})
                     return
-                    
+            
+            # get the member count of the users and send rotate type msg to owner if member count changes
+            mem_count = len(self.members)
+
             # admin commands
             if from_user in self.admins:
                 
@@ -172,8 +176,8 @@ class chat_room:
                             if chat_rooms:
                                 # delete room from server and unassign user from room
                                 del chat_rooms[self.room_name]
-
-                                # check if the chat room is empty and room from chat rooms if so
+                                return
+                    
                         else:
                             
                             if from_user == self.get_owner():
@@ -209,6 +213,11 @@ class chat_room:
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": help_msg})
                 case "!admins":
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": self.admins})
+                
+            if mem_count != len(self.members) and chat_rooms:
+                # member count has changed, send owner type rotate key message
+                send_message(clients[self.get_owner()].get_socket(), {"TYPE": "ROTATE", "CHAT_ROOM": chat_rooms[self.room_name], "PUBKEY_DIR": pubkey_dir})
+
         else:
             for client in clients:
                 if client == from_user:

@@ -12,7 +12,6 @@ from tkinter import ttk
 from protocol import send_message, recv_message
 from tkinter import font
 
-
 state = {
     "RUNNING": True,
     "IN_ROOM": False,
@@ -25,10 +24,11 @@ state = {
         "JOIN_REJECT": False,
         "CREATE_REJECT": False,
 
-        "OWNER": False
+        "OWNER": False,
+
+        "ROTATE_FLAG": False,
     },
 }
-
 
 inbox = queue.Queue()   # messages from server (dicts)
 outbox = queue.Queue()  # messages to be sent to relay server (dicts)
@@ -41,9 +41,7 @@ def recieving_thread(s):
         msg = recv_message(s)
         # in the case of a null msg sent to socket
         
-
         if msg is None:
-            print("MESSAGE IS NULL!~!!!")
             print("Disconnected from server.")
             state["RUNNING"] = False
             s.close()
@@ -85,15 +83,9 @@ def process_inbox(s):
             # gets the type of the message
             mType = msg.get("TYPE")
 
+            print("PROCESSING::::: ",msg)
             match mType:
                 
-                case "CONNECTED":
-
-                    # we are connected!
-                    state["IN_ROOM"] = True
-
-                    state["ROOM"]["ROOM_NAME"] = msg.get("ROOM_NAME")
-
                 # message type that indicates a logic error
                 case "ERROR":
                     
@@ -122,7 +114,7 @@ def process_inbox(s):
                     # All rejoin handling is done within the chat room scene class
 
                 # inbound messages coming from other users in the assigned room / from broadcast
-                case "RECEIVE" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "ADMIN" | "ROOM_KEY_WRAP" | "JOIN":
+                case "SEND" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "ADMIN" | "ROOM_KEY_WRAP" | "ROTATE":
                     
                     # process it in the local queue to print messages from users / print broadcast messages
                     # when registered, make info like chat_rooms and server message accessible by local queue
@@ -134,10 +126,20 @@ def process_inbox(s):
                     state["ROOM"][mType] = True
                     local.put(msg)
 
+                case "CONNECTED":
+                    
+                    room = msg.get("CHAT_ROOM")
+
+                    state["IN_ROOM"] = True
+                    state["ROOM"]["ROOM_NAME"] = room.get_chat_room_name()
+
+                    if room.get_owner() != state["USER"]:
+                        # rotate key as someone new has joined
+                        state["ROOM"]["ADMIN_FLAG"] = True
+
         except queue.Empty:
             pass
         
-
 def poll_registration(expected_type):
     stash = []
 
@@ -160,14 +162,6 @@ def poll_registration(expected_type):
         stash.append(msg)
         
 class ChatGUI(tk.Tk):
-    """
-    Scene-based Tkinter app:
-      - UsernameScene
-      - ConnectedScene (branches based on chat_rooms)
-      - CreateRoomScene (placeholder)
-      - JoinRoomScene (placeholder)
-      - RoomScene
-    """
 
     def __init__(self):
         super().__init__()
@@ -433,7 +427,6 @@ class CreateRoomScene(ttk.Frame):
         
         # clear error msg when user tries to create a room again
         self.error_label.config(text="")
-
         room_name = self.room_entry.get()
         password = self.pass_entry.get()
 
@@ -462,7 +455,6 @@ class CreateRoomScene(ttk.Frame):
             state["ROOM"]["ADMIN_FLAG"] = True
             state["ROOM"]["OWNER"] = True
             
-            print("IN ROOM, NOW GOIUNG TO ROOM SCCENE")
             self.app.show("RoomScene")
 
         elif state["ROOM"]["CREATE_REJECT"]:
@@ -620,7 +612,8 @@ class JoinRoomScene(ttk.Frame):
 
         if state["IN_ROOM"]:
             # if the in room state becomes true, then we can confirm that the room creation was successful
-            self.app.show("RoomScene")
+            print("IN ROOM!!!!")
+            self.app.show("RoomScene") # runs when room key wrap type is reached - block something
 
         elif state["ROOM"]["JOIN_REJECT"]:
             
@@ -636,14 +629,6 @@ class JoinRoomScene(ttk.Frame):
             self.after(5, self.wait_for_room_connect)
         
 class RoomScene(ttk.Frame):
-    """
-    Admin mode UI requirements implemented:
-      - Chat/messages ONLY in left half
-      - Room + User labels adjacent, left-aligned above chat box
-      - Right half contains "Admin Panel" centered
-      - "Admin Tools" and "Leave" buttons evenly spaced under the title
-      - Admin tools is NOT a new window; it is embedded in the right half
-    """
 
     def __init__(self, parent, app):
         super().__init__(parent)
@@ -651,7 +636,6 @@ class RoomScene(ttk.Frame):
 
         self.chat_rooms = {} 
         self.secure_ready = False
-        self._awaiting_wrap = False
 
         # Polling
         self._polling = False
@@ -804,13 +788,12 @@ class RoomScene(ttk.Frame):
         self.room_state = client_encryption.RoomCryptoState(state["ROOM"]["OWNER"])
 
         if self.room_state.is_owner:
+
             self.secure_ready = True
-            self._awaiting_wrap = False
             self.room_state.ins_as_creator()
         else:
             self.secure_ready = False
-            self._awaiting_wrap = True
-            self._append_chat("establishing room key")
+            self._append_chat("[YOU]: Establishing room key...")
 
         # disable send until secure
         self._set_input_enabled(self.secure_ready)
@@ -823,7 +806,6 @@ class RoomScene(ttk.Frame):
 
     def _schedule_poll(self):
         self._poll_job = self.after(10, self._poll_inbox)
-
 
     def _set_input_enabled(self, enabled: bool):
         self.entry.configure(state=("normal" if enabled else "disabled"))
@@ -865,6 +847,7 @@ class RoomScene(ttk.Frame):
         
         # encrypt message
         secure_send = encryption_helper.encrypt_room_msg(
+            self.app.client_crypto.sign_priv,
             self.room_state.room_key,
             self.room_state.epoch,
             self.room_state.send_ctr,
@@ -927,17 +910,17 @@ class RoomScene(ttk.Frame):
     def handle_decrypt(self, msg):
 
         if msg["EPOCH"] != self.room_state.epoch:
-            print("INVALID MSG.. DISCARDING")
             self._schedule_poll()
             return
         
         decrypted_msg = encryption_helper.decrypt_room_message(
+                self.app.client_crypto.sign_pub,
                 self.room_state.room_key,
                 msg,
                 self.room_state.recv_ctr,
             )
 
-        self._append_chat(f"{msg["FROM"]: {decrypted_msg}}")
+        self._append_chat(f"{msg["FROM"]}: {decrypted_msg}")
         
     def _poll_inbox(self):
         if not self._polling or not state.get("RUNNING"):
@@ -951,35 +934,41 @@ class RoomScene(ttk.Frame):
 
         mtype = msg.get("TYPE")
 
-        if not self.secure_ready:
-            # Only accept the wrap while waiting
-            if mtype != "ROOM_KEY_WRAP":
-                # discard everything else before key established
-                self._schedule_poll()
-                return
+        # check for room key flag
+        if state["ROOM"]["ROTATE_FLAG"]:
+             
+            print("IN STATE OF ROTATE!!!!!!!")
+            self.secure_ready = False
 
-            # Process ROOM_KEY_WRAP
-            result = encryption_helper.receiver_handle_key_wrap(
-                msg,
-                self.app.client_crypto.dh_priv
-            )
+            if mtype not in ("ROOM_KEY_WRAP", "SEND"):
+                # DISCARD IF SEND MESSAGE, -> OUTDATED
+                local.put(msg)
+            
+            elif mtype == "ROOM_KEY_WRAP":
 
-            self.room_state.room_key = result["ROOM_KEY"]
-            self.room_state.epoch = result["EPOCH"]
-            self.room_state.send_ctr = 0
-            self.room_state.recv_ctr.clear()
+                # Process ROOM_KEY_WRAP
+                result = encryption_helper.receiver_handle_key_wrap(
+                    msg,
+                    self.app.client_crypto.dh_priv
+                    )
+                self.room_state.ins_as_joiner()
 
-            self.room_state.ins_as_joiner()
+                self.room_state.set_room_key(result["ROOM_KEY"])
+                self.room_state.epoch = result["EPOCH"]
+                self.room_state.send_ctr = 0
+                self.room_state.recv_ctr.clear()
 
-            self.secure_ready = True
-            self._awaiting_wrap = False
+                self.secure_ready = True
 
-            self._set_input_enabled(True)
-            self._append_chat("[SECURE] Room key established.")
+                self._set_input_enabled(True)
+                self._append_chat("[SECURE] Room key established.")
+
+                state["ROOM"]["ROTATE_FLAG"] = False
+
             self._schedule_poll()
             return
 
-        if mtype == "RECEIVE":
+        if mtype == "SEND": # receiving type SEND message
             # encrypted
             self.handle_decrypt(msg)
 
@@ -1013,24 +1002,31 @@ class RoomScene(ttk.Frame):
             self.room_state.is_owner = True
             self.room_state.rotate_key()
 
-        elif mtype == "JOIN":
-
-            # encrypted
+        elif self.room_state.is_owner:
             
-            if not self.room_state.is_owner:
-                self._schedule_poll()
-                return
+            print("IS OWNER!!!!!!!")
+            # JOIN was replaced with ROTATE - will be called once someone joins, leaves, or rotates owner
+            if mtype == "ROTATE":
+                
+                print("ROTATE REACFHEDD!!!!!!!!")
+                if self.room_state.epoch:
+                    self.room_state.epoch += 1
 
-            outbox.put(encryption_helper.owner_handle_key_wrap(
-                msg,
-                self.app.client_crypto.sign_priv,
-                self.room_state.room_key,
-                state["USER"],
-                self.room_state.epoch
-            ))
+                new_room_key, wraps = encryption_helper.rotate_room_key(
+                    state["USER"],
+                    self.app.client_crypto.sign_priv,
+                    msg.get("PUBKEY_DIR"),
+                    msg.get("CHAT_ROOM"),
+                    self.room_state.epoch,
+                )
+            
+                self.room_state.set_room_key(new_room_key)
+
+                # send wrapped room key to everyone  else
+                for wrap in wraps:
+                    outbox.put(wrap)
 
         self._schedule_poll()
-
 
 def main():
     # Create a TCP/IP socket, connect to the VPS IP address & port

@@ -40,6 +40,9 @@ class RoomCryptoState:
         self.send_ctr = 0
         self.recv_ctr.clear
 
+    def set_room_key(self, rk):
+        self.room_key = rk
+
     def next_send_ctr(self):
         self.send_ctr += 1
         return self.send_ctr
