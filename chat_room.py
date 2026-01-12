@@ -65,8 +65,10 @@ class chat_room:
             send_message(clients[client].get_socket(), msg)
     
     def handle_command(self, type, message, clients, from_user="", chat_rooms=None, pubkey_dir=None):
+        
+        print(f"THE COMMAND IS ({message}) SENT BY {from_user}")
+        # commands     
 
-        # commands
         if type == "COMMAND":
 
             msglist = message.split(" ")
@@ -96,7 +98,6 @@ class chat_room:
             # admin commands
             if from_user in self.admins:
                 
-                print("INSIDE COMMAND ADMINS!!!!")
                 user = msglist[1] if len(msglist) > 1 else None
 
                 match command:
@@ -136,8 +137,6 @@ class chat_room:
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": self.ban_list})
 
             # base commands
-
-            print(f"ABOUT TO ENTER COMMAND WOARLDF FOR COMMAND ({command})")
             match command:
                 # returns what type of role the user has (admin / guest)
         
@@ -202,9 +201,7 @@ class chat_room:
                 
             if mem_count > len(self.members) and len(self.members) > 0 and chat_rooms:
                 # member count has changed, send owner type rotate key message
-                print("ROTATING NOW! SENDING TO ",self.get_owner())
-                send_message(clients[self.get_owner()].get_socket(), {"TYPE": "ROTATE", "CHAT_ROOM": chat_rooms[self.room_name], "PUBKEY_DIR": pubkey_dir})
-
+                send_message(clients[self.get_owner()].get_socket(), {"TYPE": "ROTATE", "JOIN": False, "CHAT_ROOM": chat_rooms[self.room_name], "PUBKEY_DIR": pubkey_dir})
         else:
             for client in clients:
                 if client == from_user:

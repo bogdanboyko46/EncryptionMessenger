@@ -68,14 +68,14 @@ def assign_room(conn, name, msg):
             return None
         
         # rotate key process -> send to owner, gen new room key and distribute to everyone   
-    send_message(conn, {"TYPE": "CONNECTED", "CHAT_ROOM": chat_rooms[room_name]}) 
 
+    send_message(conn, {"TYPE": "CONNECTED", "CHAT_ROOM": chat_rooms[room_name]}) 
+    chat_rooms[room_name].handle_command("BROADCAST", f"Welcome to the chat room, {name}!")
+    
     # send rotate msg to owner
     if mtype == "JOIN_ROOM":
         send_message(clients[chat_rooms[room_name].get_owner()].get_socket(), {
             "TYPE": "ROTATE", 
-            "JOIN": True, 
-            "USER": name,
             "PUBKEY_DIR": pubkey_dir, 
             "CHAT_ROOM": chat_rooms[room_name]
             })
@@ -164,14 +164,6 @@ def handle_client(conn, addr):
                         pubkey_dir=pubkey_dir
                         )
 
-                case "BROADCAST":
-                    # specifically used when someone joins chat room
-                    chat_rooms[chat_room_name].handle_command(
-                        mType,
-                        msg.get("MESSAGE"),
-                        clients,
-                    )
-
                 case "RELOAD":
                     # send the client the current chat rooms
                     send_message(conn, {"TYPE": "RELOAD", "CHAT_ROOMS": chat_rooms})
@@ -179,6 +171,8 @@ def handle_client(conn, addr):
                 case "ROOM_KEY_WRAP":
                     # reroute to the respective user
 
+                    print("GOT!!")
+                    
                     TO = msg.get("TO")
 
                     if TO in clients:

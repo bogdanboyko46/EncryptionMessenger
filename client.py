@@ -132,7 +132,7 @@ def process_inbox(s):
 
                     state["IN_ROOM"] = True
                     state["ROOM"]["ROOM_NAME"] = room.get_chat_room_name()
-                
+                    
                 case "ROOM_KEY_WRAP":
                     state["ROOM"]["ROTATE_FLAG"] = True
                     
@@ -167,6 +167,7 @@ class ChatGUI(tk.Tk):
     def __init__(self):
         super().__init__()
 
+        self._theme()
          # generate necessary client crypto obj
         self.client_crypto = client_encryption.ClientCrypto()
 
@@ -227,27 +228,173 @@ class ChatGUI(tk.Tk):
         frame.room_logic()
         frame.tkraise()
 
+    def _theme(self):
+        style = ttk.Style(self)
+
+        # Use a theme that is configurable (default themes are often ugly + limited)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass  # fallback to whatever exists
+
+        # --- Palette (modern, not grayscale) ---
+        BG        = "#0B1220"  # window background (deep navy)
+        SURFACE   = "#111A2E"  # cards/panels
+        SURFACE_2 = "#16223A"  # inputs / slightly raised
+        TEXT      = "#E6EAF2"  # primary text
+        MUTED     = "#A8B0C3"  # secondary text
+        ACCENT    = "#4F7DFF"  # primary action
+        ACCENT_2  = "#2FE4AB"  # secondary highlight
+        DANGER    = "#FF5C7A"  # errors
+
+        self.configure(bg=BG)
+
+        style.configure(".", font=("Segoe UI", 11))
+        style.configure("TFrame", background=BG)
+        style.configure("Card.TFrame", background=SURFACE)
+        style.configure("TLabel", background=BG, foreground=TEXT)
+        style.configure("Muted.TLabel", background=BG, foreground=MUTED)
+        style.configure("Title.TLabel", background=BG, foreground=TEXT, font=("Segoe UI", 20, "bold"))
+        style.configure("Subtitle.TLabel", background=BG, foreground=MUTED, font=("Segoe UI", 12))
+        style.configure("Danger.TLabel", background=BG, foreground=DANGER)
+
+        # Buttons
+        style.configure(
+            "TButton",
+            padding=(14, 10),
+            background=SURFACE_2,
+            foreground=TEXT,
+            borderwidth=0,
+            focusthickness=0
+        )
+        style.map(
+            "TButton",
+            background=[("active", "#1B2A4A"), ("pressed", "#0E1630"), ("disabled", "#0E1630")],
+            foreground=[("disabled", "#66708A")]
+        )
+
+        # Primary button (use by setting style="Primary.TButton")
+        style.configure(
+            "Primary.TButton",
+            padding=(16, 11),
+            background=ACCENT,
+            foreground="white",
+            borderwidth=0
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("active", "#3E6FFF"), ("pressed", "#2E58DA"), ("disabled", "#1D2C5A")],
+            foreground=[("disabled", "#B9C3DD")]
+        )
+
+     # reload button
+        style.configure(
+            "Icon.TButton",
+            padding=(10, 8),
+            background=SURFACE,
+            foreground=TEXT
+        )
+        style.map(
+            "Icon.TButton",
+            background=[("active", "#1B2A4A"), ("pressed", "#0E1630")]
+        )
+
+        # Entries
+        style.configure(
+            "TEntry",
+            padding=(10, 8),
+            fieldbackground=SURFACE_2,
+            foreground=TEXT,
+            borderwidth=0,
+            relief="flat",
+            insertcolor=TEXT
+        )
+
+        style.map(
+            "TEntry",
+            fieldbackground=[("focus", SURFACE_2), ("active", SURFACE_2)],
+            foreground=[("focus", TEXT), ("active", TEXT)]
+        )
+
+        # Scrollbar
+        style.configure("Vertical.TScrollbar", background=SURFACE, troughcolor=BG, bordercolor=BG, arrowcolor=MUTED)
+
+        self.option_add("*Text.background", SURFACE)
+        self.option_add("*Text.foreground", TEXT)
+        self.option_add("*Text.insertBackground", TEXT)
+        self.option_add("*Text.selectBackground", ACCENT)
+        self.option_add("*Text.selectForeground", "white")
+
+        self.option_add("*Listbox.background", SURFACE)
+        self.option_add("*Listbox.foreground", TEXT)
+        self.option_add("*Listbox.selectBackground", ACCENT)
+        self.option_add("*Listbox.selectForeground", "white")
+        self.option_add("*Listbox.highlightThickness", 0)
+        self.option_add("*Listbox.borderWidth", 0)
+
+        # Make ttk backgrounds consistent
+        style.configure("TLabelframe", background=BG, foreground=TEXT)
+        style.configure("TLabelframe.Label", background=BG, foreground=MUTED)
+
+        style.configure("Red.TLabel", background=BG, foreground=DANGER)
+
+        style.configure("Card.TLabel", background=SURFACE, foreground=TEXT)
+        style.configure("CardMuted.TLabel", background=SURFACE, foreground=MUTED)
+        style.configure("CardTitle.TLabel", background=SURFACE, foreground=TEXT, font=("Segoe UI", 20, "bold"))
+        style.configure("CardSubtitle.TLabel", background=SURFACE, foreground=MUTED, font=("Segoe UI", 12))
 
 class UsernameScene(ttk.Frame):
     def __init__(self, parent, app: ChatGUI):
         super().__init__(parent)
         self.app = app
 
-        # Center row
-        wrap = ttk.Frame(self)
-        wrap.place(relx=0.5, rely=0.5, anchor="center")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        prompt = ttk.Label(wrap, text="Hello! Please enter your name:", font=("Arial", 20))
-        prompt.grid(row=0, column=0, padx=(0, 12), sticky="e")
+        outer = ttk.Frame(self)
+        outer.grid(row=0, column=0, sticky="nsew", padx=24, pady=24)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
 
-        self.entry = ttk.Entry(wrap, width=22, font=("Arial", 16))
-        self.entry.grid(row=0, column=1, sticky="w")
+        card = ttk.Frame(outer, style="Card.TFrame")
+        card.grid(row=0, column=0, sticky="n", pady=(40, 0))
+        card.columnconfigure(0, weight=1)
 
-        # Enter submits
+        # Give the card internal padding by placing an inner frame
+        inner = ttk.Frame(card, style="Card.TFrame")
+        inner.grid(row=0, column=0, sticky="nsew", padx=26, pady=22)
+        inner.columnconfigure(0, weight=1)
+        
+        title = ttk.Label(inner, text="Chat Room Messenger", style="CardTitle.TLabel")
+        title.grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+        subtitle = ttk.Label(
+            inner,
+            text="Enter a display name to connect securely.",
+            style="CardSubtitle.TLabel"
+        )
+        subtitle.grid(row=1, column=0, sticky="w", pady=(0, 18))
+
+        # Field label
+        field_label = ttk.Label(inner, text="Display name", style="CardMuted.TLabel")
+        field_label.grid(row=2, column=0, sticky="w", pady=(0, 6))
+
+        # Hint line
+        hint = ttk.Label(inner, text="Tip: Press Enter to continue.", style="CardMuted.TLabel")
+        hint.grid(row=4, column=0, sticky="w", pady=(14, 0))
+
+        # Input row: entry + button
+        row = ttk.Frame(inner, style="Card.TFrame")
+        row.grid(row=3, column=0, sticky="ew")
+        row.columnconfigure(0, weight=1)
+
+        self.entry = ttk.Entry(row, width=26, font=("Segoe UI", 13))
+        self.entry.grid(row=0, column=0, sticky="ew", ipady=6)
         self.entry.bind("<Return>", self.on_submit)
 
-        hint = ttk.Label(self, text="Press Enter to continue.", font=("Arial", 11))
-        hint.place(relx=0.5, rely=0.5, anchor="n", y=40)
+        enter_btn = ttk.Button(row, text="Continue", style="Primary.TButton", command=self.on_submit)
+        enter_btn.grid(row=0, column=1, padx=(12, 0), ipadx=10, ipady=2)
+
 
     def on_show(self):
         self.entry.delete(0, "end")
@@ -288,7 +435,7 @@ class ConnectedScene(ttk.Frame):
         command=self.app.rejoin
             )
             
-        reload_btn.configure(style="Reload.TButton")
+        reload_btn.configure(style="Icon.TButton")
 
         style = ttk.Style()
         style.configure("Reload.TButton", font=reload_font)
@@ -378,6 +525,7 @@ class ConnectedScene(ttk.Frame):
 class CreateRoomScene(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent)
+        
         self.app = app
 
         self.columnconfigure(0, weight=1)
@@ -500,9 +648,10 @@ class JoinRoomScene(ttk.Frame):
 
         self.rooms_list = tk.Listbox(left, height=10, width=28, exportselection=False)
         self.rooms_list.grid(row=1, column=0, pady=(8, 0))
+        self.rooms_list.configure(font=("Segoe UI", 11), height=12)
         self.rooms_list.bind("<<ListboxSelect>>", self.on_room_select)
         self.rooms_list.bind("<Double-Button-1>", lambda e: self.on_join())
-
+        
         # Details + password (right)
         right = ttk.Frame(content)
         right.grid(row=0, column=1, sticky="n")
@@ -670,10 +819,20 @@ class RoomScene(ttk.Frame):
         self.chat_text = tk.Text(self.chat_container, wrap="word", state="disabled")
         self.chat_text.grid(row=0, column=0, sticky="nsew")
 
+        self.chat_text.configure(
+        bg="#111A2E",
+        fg="#E6EAF2",
+        insertbackground="#E6EAF2",
+        relief="flat",
+        padx=12,
+        pady=10,
+        font=("Segoe UI", 11)
+        )
+
         scroll = ttk.Scrollbar(self.chat_container, orient="vertical", command=self.chat_text.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         self.chat_text.configure(yscrollcommand=scroll.set)
-
+        
         self.admin_container = ttk.Frame(self.body)
         self.admin_container.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(20, 0))
         self.admin_container.columnconfigure(0, weight=1)
@@ -745,17 +904,20 @@ class RoomScene(ttk.Frame):
 
         self._admin_list = tk.Listbox(self.admin_tools, selectmode="extended")
         self._admin_list.grid(row=2, column=0, sticky="nsew")
+        self._admin_list.configure(font=("Segoe UI", 11), height=12)
 
-        btn_row = ttk.Frame(self.admin_tools)
-        btn_row.grid(row=3, column=0, sticky="e", pady=(10, 10))
+        footer = ttk.Frame(self.admin_tools)
+        footer.grid(row=3, column=0, sticky="ew", pady=(10, 10))
+        footer.columnconfigure(0, weight=1)
+        footer.columnconfigure(1, weight=1)
+        footer.columnconfigure(2, weight=1)
+        footer.columnconfigure(3, weight=1)
 
-        ttk.Button(btn_row, text="Kick", command=lambda: self._admin_action("remove")).grid(row=0, column=0, padx=5)
-        ttk.Button(btn_row, text="Ban", command=lambda: self._admin_action("ban")).grid(row=0, column=1, padx=5)
-        ttk.Button(btn_row, text="Make Admin", command=lambda: self._admin_action("makeadmin")).grid(row=0, column=2, padx=5)
+        ttk.Button(footer, text="Kick", command=lambda: self._admin_action("remove")).grid(row=0, column=0, padx=5, sticky="ew")
+        ttk.Button(footer, text="Ban", command=lambda: self._admin_action("ban")).grid(row=0, column=1, padx=5, sticky="ew")
 
-        ttk.Button(self.admin_tools, text="Back", command=self._show_admin_main_view).grid(
-            row=4, column=0, sticky="w", pady=(0, 10)
-        )
+        ttk.Button(footer, text="Make Admin", command=lambda: self._admin_action("makeadmin")).grid(row=0, column=2, padx=5, sticky="ew")
+        ttk.Button(footer, text="Back", command=self._show_admin_main_view).grid(row=0, column=3, padx=5, sticky="ew")
 
     def _show_admin_main_view(self):
         self.admin_main.tkraise()
@@ -841,7 +1003,7 @@ class RoomScene(ttk.Frame):
         if state["ROOM"]["ADMIN_FLAG"] and msg == "!leave":
             self._leave_room()
             return
-
+        
         # do not encrypt the message if its a command
         if msgtype == "COMMAND":
             outbox.put({"TYPE": "COMMAND", "MESSAGE": msg})
@@ -895,7 +1057,7 @@ class RoomScene(ttk.Frame):
 
         # You are using command messages; keep that pattern:
         for user in users:
-            outbox.put({"TYPE": "COMMAND", "MESSAGE": f"{action_type} {user}"})
+            outbox.put({"TYPE": "COMMAND", "MESSAGE": f"!{action_type} {user}"})
 
         self._append_chat(f"[ADMIN] Sent {action_type} for: {', '.join(users)}")
 
@@ -961,9 +1123,9 @@ class RoomScene(ttk.Frame):
                 self.secure_ready = True
 
                 self._set_input_enabled(True)
-                self._append_chat("[SECURE] Room key established.")
 
                 state["ROOM"]["ROTATE_FLAG"] = False
+                self._append_chat("[PYOU]: Established new room key!")
 
             self._schedule_poll()
             return
@@ -978,7 +1140,6 @@ class RoomScene(ttk.Frame):
 
         elif mtype == "REJOIN":
             # not encrypted
-            print("REJOINING!!!!!!")
             text = msg.get("MESSAGE", "")
             self._append_chat(f"[BROADCAST] {text}")
             self._set_input_enabled(False)
@@ -1000,7 +1161,6 @@ class RoomScene(ttk.Frame):
 
         elif mtype == "OWNER":
             # not encrypted
-            print("BECOMING OWNER, ROTATING KEYS!")
             self.room_state.is_owner = True
             self.room_state.rotate_key()
             state["ROOM"]["OWNER"] = True
@@ -1023,11 +1183,15 @@ class RoomScene(ttk.Frame):
                 )
             
                 self.room_state.set_room_key(new_room_key)
-
-                # send wrapped room key to everyone  else
+ 
+                # send wrapped room key to everyone else
                 for wrap in wraps:
                     outbox.put(wrap)
-            
+
+                if msg["JOIN"]:
+                    # send broadcast join message to relay server
+                    outbox.put({"TYPE": "BROADCAST", "MESSAGE": f"Welcome to the chat room, {msg["USER"]}"})
+
         self._schedule_poll()
 
 def main():
