@@ -8,7 +8,7 @@ class chat_room:
     def __init__(self, room_name, name, password=None):
         self.room_name = room_name
         self.admins = [name]
-        self.users = [name]
+        self.members = [name]
         self.has_password = False
         self.ban_list = []
         self.counter = None # set to none temp
@@ -35,21 +35,21 @@ class chat_room:
 
         if self.has_password:
             if password == self.password:
-                self.users.append(name)
+                self.members.append(name)
             
             else:
                 # only runs when a user is trying to join a password protected room with the wrong password, socket is provided when joining a password protected room
                 send_message(socket, {"TYPE": "JOIN_REJECT", "MESSAGE": "The password entered was incorrect!"})
         else:
-            self.users.append(name)
+            self.members.append(name)
     
     # removes a user
     def remove_user(self, user):
-        self.users.remove(user)
+        self.members.remove(user)
 
     # lists user
     def list_users(self):
-        return self.users
+        return self.members
     
     def get_owner(self):
         return self.admins[0]
@@ -57,19 +57,37 @@ class chat_room:
     # broadcast msg to server, printing that a new user had joined the room, (displays for user that joined too)
     # passes to the send_message function below for slight optimization
     def broadcast(self, clients, name):
-        self.send_message("BROADCAST", f"Welcome to the chat room {name}!", clients)
+        self.handle_command("BROADCAST", f"Welcome to the chat room {name}!", clients)
 
     # Checks if a username is in a room (string -> boolean)
     def in_room(self, user):
-        return user in self.users
+        return user in self.members
     
+<<<<<<< HEAD
+    def handle_normal_message(self, msg, clients):
+=======
     # from_user is a default argument so broadcast msg essentially "bypasses" the check within the loop, printing to the user that joined also
     def send_message(self, type, message, clients, from_user="", chat_rooms=None):
 
         # edge case where user was able to send a message to the room but not is allowed anymore (kicked or banned)
+>>>>>>> origin/main
         
-        # commands
+        # message is encrypted, message contents cannot be read besides metadata
+        from_user = msg.get("FROM")
+
+        for client in clients:
+            if from_user == client:
+                continue
+
+            send_message(clients[client].get_socket(), msg)
+    
+    def handle_command(self, type, message, clients, from_user="", chat_rooms=None, pubkey_dir=None):
+        
+        print(f"THE COMMAND IS ({message}) SENT BY {from_user}")
+        # commands     
+
         if type == "COMMAND":
+
             msglist = message.split(" ")
             command = msglist[0]
 
@@ -81,7 +99,7 @@ class chat_room:
                 elif msglist[1] == from_user:
                     send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": "You cannot perform this action on yourself."})
                     return
-                elif msglist[1] not in self.users:
+                elif msglist[1] not in self.members:
                     send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": f"{msglist[1]} is not in the room."})
                     return
                 
@@ -90,7 +108,10 @@ class chat_room:
                 if command in ("!remove", "!makeadmin", "!ban"):
                     send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": "Invalid command format."})
                     return
-                    
+            
+            # get the member count of the users and send rotate type msg to owner if member count changes
+            mem_count = len(self.members)
+
             # admin commands
             if from_user in self.admins:
                 
@@ -100,15 +121,15 @@ class chat_room:
                     case "!remove":
 
                         # send message to client before removing from room to process the message
-                        self.users.remove(user)
+                        self.members.remove(user)
                         send_message(clients[user].get_socket(), {"TYPE": "REJOIN", "DISCONNECT_TYPE": "KICK", "MESSAGE": "You have been removed from the room by an admin."})
 
                         # message to the rest of the users that the user has been removed
-                        self.send_message("BROADCAST", f"{user} has been removed from the room by an admin.", clients)
+                        self.handle_command("BROADCAST", f"{user} has been removed from the room by an admin.", clients)
 
                     case "!listusers":
 
-                        send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": self.users})
+                        send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": self.members})
 
                     case "!makeadmin":
 
@@ -123,11 +144,11 @@ class chat_room:
                     
                         # send message to client before removing from room to process the message
                         self.ban_list.append(user)
-                        self.users.remove(user)
+                        self.members.remove(user)
                         send_message(clients[user].get_socket(), {"TYPE": "REJOIN", "DISCONNECT_TYPE": "BAN", "MESSAGE": "You have been banned from the room by an admin."})
 
                         # message to the rest of the users that the user has been banned
-                        self.send_message("BROADCAST", f"{user} has been banned from the room by an admin.", clients)
+                        self.handle_command("BROADCAST", f"{user} has been banned from the room by an admin.", clients)
 
                     case "!banlist":
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": self.ban_list})
@@ -135,7 +156,7 @@ class chat_room:
             # base commands
             match command:
                 # returns what type of role the user has (admin / guest)
-                
+        
                 case "!role":
                     
                     if from_user in self.admins:
@@ -145,6 +166,23 @@ class chat_room:
 
                 case "!leave":
                         
+<<<<<<< HEAD
+                        was_owner = (from_user == self.get_owner())
+
+                        if from_user in self.members:
+                            self.members.remove(from_user)
+                        if from_user in self.admins:
+                            self.admins.remove(from_user)
+
+                        if not self.members and chat_rooms:
+                            del chat_rooms[self.room_name]
+
+                        if not self.admins and self.members:
+                            self.admins.append(self.members[0])
+                            to_socket = clients[self.members[0]].get_socket()
+                            send_message(to_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made an admin by an existing admin."})
+                            send_message(to_socket, {"TYPE": "ADMIN"})
+=======
                         
                         if from_user in self.users:
                             self.remove_user(from_user)
@@ -176,11 +214,23 @@ class chat_room:
                                     send_message(to_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made an admin by an existing admin."})
                                     send_message(to_socket, {"TYPE": "ADMIN"})
                                     # the next newest admin is considered owner, will handle all E2EE operations
+>>>>>>> origin/main
 
+                        if was_owner and self.admins:
+                            new_owner = self.admins[0]
+                            to_socket = clients[new_owner].get_socket()
+                            send_message(to_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made owner!"})
+                            send_message(to_socket, {"TYPE": "OWNER"})
+                        
+                        self.handle_command("BROADCAST", f"{from_user} has left the room. Rotating keys.", clients)
+                        # send rejoin message to the one who left
                         send_message(clients[from_user].get_socket(), {"TYPE": "REJOIN", "MESSAGE": "You have left the room."})
+<<<<<<< HEAD
+=======
                         # message to the rest of the users that the user has left
                         self.send_message("BROADCAST", f"{from_user} has left the room.", clients, from_user=from_user)
 
+>>>>>>> origin/main
                 case "!roomname":
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": f"The room name is: {self.room_name}"})
                 case "!help":
@@ -205,11 +255,13 @@ class chat_room:
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": help_msg})
                 case "!admins":
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": self.admins})
-                        
-             
+                
+            if mem_count > len(self.members) and len(self.members) > 0 and chat_rooms:
+                # member count has changed, send owner type rotate key message
+                send_message(clients[self.get_owner()].get_socket(), {"TYPE": "ROTATE", "JOIN": False, "CHAT_ROOM": chat_rooms[self.room_name], "PUBKEY_DIR": pubkey_dir})
         else:
-            # loops thru every user in that room and sends the corresponding message to them
-            # .get_socket() is function in client.
-            for user in self.users:
-                if user != from_user:
-                    send_message(clients[user].get_socket(), {"TYPE": type, "FROM": from_user, "MESSAGE": message})
+            for client in clients:
+                if client == from_user:
+                    continue
+
+                send_message(clients[client].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": message})

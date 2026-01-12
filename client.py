@@ -2,11 +2,12 @@
 # It refers to the bytes sent between clients & relay_server, these messages for most part contain 
 # socket & a map of instructions
 
-import time
 import socket
 import threading
 import queue
 import tkinter as tk
+import client_encryption
+import encryption_helper
 from tkinter import ttk
 from protocol import send_message, recv_message
 from tkinter import font
@@ -16,12 +17,24 @@ state = {
 
     "RUNNING": True,
     "IN_ROOM": False,
-    "ROOM": None,
     "USER": None, 
 
+<<<<<<< HEAD
+    "ROOM": {
+        "ROOM_NAME": None,
+        "ADMIN_FLAG": False,
+
+        "JOIN_REJECT": False,
+        "CREATE_REJECT": False,
+
+        "OWNER": False,
+
+        "ROTATE_FLAG": False,
+=======
     "ROOM_ACTION_ERROR": {
         "JOIN_REJECT": False,
         "CREATE_REJECT": False,
+>>>>>>> origin/main
     },
 }
 
@@ -63,8 +76,13 @@ def outbox_thread(s):
         # invalid contents if condition passes; either null or contains nothing
         if contents is None or not contents:
             continue
+<<<<<<< HEAD
+        
+        # print(f"SENDING {contents}")
+=======
 
         print(f"SENDING {contents}")
+>>>>>>> origin/main
         # else, we send the contents to the relay server
         send_message(s, contents)
 
@@ -82,12 +100,6 @@ def process_inbox(s):
             print(f"PROCESSING MSG {msg}")
             match mType:
                 
-                case "CONNECTED":
-
-                    # we are connected!
-                    state["IN_ROOM"] = True
-                    state["ROOM"] = msg.get("ROOM_NAME")
-
                 # message type that indicates a logic error
                 case "ERROR":
                     
@@ -108,15 +120,16 @@ def process_inbox(s):
 
                     # unassign user flags
                     state["IN_ROOM"] = False
-                    state["ROOM"] = None
+                    state["ROOM"]["ROOM_NAME"] = None
                     
                     # PRINT SERVER MESSAGE TO USER - PROVIDE CHAT_ROOMS
                     local.put(msg)
 
+                    print("REJOINING!!!!!")
                     # All rejoin handling is done within the chat room scene class
 
                 # inbound messages coming from other users in the assigned room / from broadcast
-                case "RECEIVE" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "ADMIN":
+                case "SEND" | "BROADCAST" | "REGISTRATION" | "RELOAD" | "ADMIN" | "ROTATE" | "OWNER":
                     
                     # process it in the local queue to print messages from users / print broadcast messages
                     # when registered, make info like chat_rooms and server message accessible by local queue
@@ -125,19 +138,34 @@ def process_inbox(s):
                 case "JOIN_REJECT" | "CREATE_REJECT":
                     # set error flag to true
                     
+<<<<<<< HEAD
+                    state["ROOM"][mType] = True
+                    local.put(msg)
+
+                case "CONNECTED":
+                    
+                    room = msg.get("CHAT_ROOM")
+
+                    state["IN_ROOM"] = True
+                    state["ROOM"]["ROOM_NAME"] = room.get_chat_room_name()
+                    
+                case "ROOM_KEY_WRAP":
+                    state["ROOM"]["ROTATE_FLAG"] = True
+                    
+=======
                     state["ROOM_ACTION_ERROR"][mType] = True
+>>>>>>> origin/main
                     local.put(msg)
 
         except queue.Empty:
             pass
         
-
 def poll_registration(expected_type):
     stash = []
 
     while True:
         try:
-            msg = local.get(timeout=.25)
+            msg = local.get_nowait()
         except queue.Empty:
             # retry
             continue
@@ -154,9 +182,20 @@ def poll_registration(expected_type):
         stash.append(msg)
         
 class ChatGUI(tk.Tk):
+<<<<<<< HEAD
+
+    def __init__(self):
+        super().__init__()
+
+        self._theme()
+         # generate necessary client crypto obj
+        self.client_crypto = client_encryption.ClientCrypto()
+
+=======
     def __init__(self):
         super().__init__()
         
+>>>>>>> origin/main
         self.title("Chat Room Messenger")
         self.geometry("975x550")
 
@@ -214,27 +253,173 @@ class ChatGUI(tk.Tk):
         frame.room_logic()
         frame.tkraise()
 
+    def _theme(self):
+        style = ttk.Style(self)
+
+        # Use a theme that is configurable (default themes are often ugly + limited)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass  # fallback to whatever exists
+
+        # --- Palette (modern, not grayscale) ---
+        BG        = "#0B1220"  # window background (deep navy)
+        SURFACE   = "#111A2E"  # cards/panels
+        SURFACE_2 = "#16223A"  # inputs / slightly raised
+        TEXT      = "#E6EAF2"  # primary text
+        MUTED     = "#A8B0C3"  # secondary text
+        ACCENT    = "#4F7DFF"  # primary action
+        ACCENT_2  = "#2FE4AB"  # secondary highlight
+        DANGER    = "#FF5C7A"  # errors
+
+        self.configure(bg=BG)
+
+        style.configure(".", font=("Segoe UI", 11))
+        style.configure("TFrame", background=BG)
+        style.configure("Card.TFrame", background=SURFACE)
+        style.configure("TLabel", background=BG, foreground=TEXT)
+        style.configure("Muted.TLabel", background=BG, foreground=MUTED)
+        style.configure("Title.TLabel", background=BG, foreground=TEXT, font=("Segoe UI", 20, "bold"))
+        style.configure("Subtitle.TLabel", background=BG, foreground=MUTED, font=("Segoe UI", 12))
+        style.configure("Danger.TLabel", background=BG, foreground=DANGER)
+
+        # Buttons
+        style.configure(
+            "TButton",
+            padding=(14, 10),
+            background=SURFACE_2,
+            foreground=TEXT,
+            borderwidth=0,
+            focusthickness=0
+        )
+        style.map(
+            "TButton",
+            background=[("active", "#1B2A4A"), ("pressed", "#0E1630"), ("disabled", "#0E1630")],
+            foreground=[("disabled", "#66708A")]
+        )
+
+        # Primary button (use by setting style="Primary.TButton")
+        style.configure(
+            "Primary.TButton",
+            padding=(16, 11),
+            background=ACCENT,
+            foreground="white",
+            borderwidth=0
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("active", "#3E6FFF"), ("pressed", "#2E58DA"), ("disabled", "#1D2C5A")],
+            foreground=[("disabled", "#B9C3DD")]
+        )
+
+     # reload button
+        style.configure(
+            "Icon.TButton",
+            padding=(10, 8),
+            background=SURFACE,
+            foreground=TEXT
+        )
+        style.map(
+            "Icon.TButton",
+            background=[("active", "#1B2A4A"), ("pressed", "#0E1630")]
+        )
+
+        # Entries
+        style.configure(
+            "TEntry",
+            padding=(10, 8),
+            fieldbackground=SURFACE_2,
+            foreground=TEXT,
+            borderwidth=0,
+            relief="flat",
+            insertcolor=TEXT
+        )
+
+        style.map(
+            "TEntry",
+            fieldbackground=[("focus", SURFACE_2), ("active", SURFACE_2)],
+            foreground=[("focus", TEXT), ("active", TEXT)]
+        )
+
+        # Scrollbar
+        style.configure("Vertical.TScrollbar", background=SURFACE, troughcolor=BG, bordercolor=BG, arrowcolor=MUTED)
+
+        self.option_add("*Text.background", SURFACE)
+        self.option_add("*Text.foreground", TEXT)
+        self.option_add("*Text.insertBackground", TEXT)
+        self.option_add("*Text.selectBackground", ACCENT)
+        self.option_add("*Text.selectForeground", "white")
+
+        self.option_add("*Listbox.background", SURFACE)
+        self.option_add("*Listbox.foreground", TEXT)
+        self.option_add("*Listbox.selectBackground", ACCENT)
+        self.option_add("*Listbox.selectForeground", "white")
+        self.option_add("*Listbox.highlightThickness", 0)
+        self.option_add("*Listbox.borderWidth", 0)
+
+        # Make ttk backgrounds consistent
+        style.configure("TLabelframe", background=BG, foreground=TEXT)
+        style.configure("TLabelframe.Label", background=BG, foreground=MUTED)
+
+        style.configure("Red.TLabel", background=BG, foreground=DANGER)
+
+        style.configure("Card.TLabel", background=SURFACE, foreground=TEXT)
+        style.configure("CardMuted.TLabel", background=SURFACE, foreground=MUTED)
+        style.configure("CardTitle.TLabel", background=SURFACE, foreground=TEXT, font=("Segoe UI", 20, "bold"))
+        style.configure("CardSubtitle.TLabel", background=SURFACE, foreground=MUTED, font=("Segoe UI", 12))
 
 class UsernameScene(ttk.Frame):
     def __init__(self, parent, app: ChatGUI):
         super().__init__(parent)
         self.app = app
 
-        # Center row
-        wrap = ttk.Frame(self)
-        wrap.place(relx=0.5, rely=0.5, anchor="center")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        prompt = ttk.Label(wrap, text="Hello! Please enter your name:", font=("Arial", 20))
-        prompt.grid(row=0, column=0, padx=(0, 12), sticky="e")
+        outer = ttk.Frame(self)
+        outer.grid(row=0, column=0, sticky="nsew", padx=24, pady=24)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
 
-        self.entry = ttk.Entry(wrap, width=22, font=("Arial", 16))
-        self.entry.grid(row=0, column=1, sticky="w")
+        card = ttk.Frame(outer, style="Card.TFrame")
+        card.grid(row=0, column=0, sticky="n", pady=(40, 0))
+        card.columnconfigure(0, weight=1)
 
-        # Enter submits
+        # Give the card internal padding by placing an inner frame
+        inner = ttk.Frame(card, style="Card.TFrame")
+        inner.grid(row=0, column=0, sticky="nsew", padx=26, pady=22)
+        inner.columnconfigure(0, weight=1)
+        
+        title = ttk.Label(inner, text="Chat Room Messenger", style="CardTitle.TLabel")
+        title.grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+        subtitle = ttk.Label(
+            inner,
+            text="Enter a display name to connect securely.",
+            style="CardSubtitle.TLabel"
+        )
+        subtitle.grid(row=1, column=0, sticky="w", pady=(0, 18))
+
+        # Field label
+        field_label = ttk.Label(inner, text="Display name", style="CardMuted.TLabel")
+        field_label.grid(row=2, column=0, sticky="w", pady=(0, 6))
+
+        # Hint line
+        hint = ttk.Label(inner, text="Tip: Press Enter to continue.", style="CardMuted.TLabel")
+        hint.grid(row=4, column=0, sticky="w", pady=(14, 0))
+
+        # Input row: entry + button
+        row = ttk.Frame(inner, style="Card.TFrame")
+        row.grid(row=3, column=0, sticky="ew")
+        row.columnconfigure(0, weight=1)
+
+        self.entry = ttk.Entry(row, width=26, font=("Segoe UI", 13))
+        self.entry.grid(row=0, column=0, sticky="ew", ipady=6)
         self.entry.bind("<Return>", self.on_submit)
 
-        hint = ttk.Label(self, text="Press Enter to continue.", font=("Arial", 11))
-        hint.place(relx=0.5, rely=0.5, anchor="n", y=40)
+        enter_btn = ttk.Button(row, text="Continue", style="Primary.TButton", command=self.on_submit)
+        enter_btn.grid(row=0, column=1, padx=(12, 0), ipadx=10, ipady=2)
+
 
     def on_show(self):
         self.entry.delete(0, "end")
@@ -275,7 +460,7 @@ class ConnectedScene(ttk.Frame):
         command=self.app.rejoin
             )
             
-        reload_btn.configure(style="Reload.TButton")
+        reload_btn.configure(style="Icon.TButton")
 
         style = ttk.Style()
         style.configure("Reload.TButton", font=reload_font)
@@ -283,8 +468,18 @@ class ConnectedScene(ttk.Frame):
         reload_btn.place(relx=1.0, rely=0.0, x=-12, y=12, anchor="ne")
 
     def on_show(self):
+<<<<<<< HEAD
+
+        outbox.put({
+            "TYPE": "PUBKEYS",
+            "NAME": state["USER"],
+            "SIGN_PUB": encryption_helper.sign_pub_bytes(self.app.client_crypto.sign_pub),
+            "DH_PUB": encryption_helper.dh_pub_bytes(self.app.client_crypto.dh_pub),
+            })
+=======
         # create client obj
         outbox.put({"NAME": state["USER"]})
+>>>>>>> origin/main
         
         self.welcome_label.config(text="Connecting...")
         for w in self.content_frame.winfo_children():
@@ -360,6 +555,7 @@ class ConnectedScene(ttk.Frame):
 class CreateRoomScene(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent)
+        
         self.app = app
 
         self.columnconfigure(0, weight=1)
@@ -410,7 +606,6 @@ class CreateRoomScene(ttk.Frame):
         
         # clear error msg when user tries to create a room again
         self.error_label.config(text="")
-
         room_name = self.room_entry.get()
         password = self.pass_entry.get()
 
@@ -436,17 +631,30 @@ class CreateRoomScene(ttk.Frame):
     def wait_for_room_connect(self):
         if state["IN_ROOM"]:
             # if the in room state becomes true, then we can confirm that the room creation was successful
+<<<<<<< HEAD
+            state["ROOM"]["ADMIN_FLAG"] = True
+            state["ROOM"]["OWNER"] = True
+            
+            self.app.show("RoomScene")
+
+        elif state["ROOM"]["CREATE_REJECT"]:
+=======
             self.app.frame.get("RoomScene")._is_admin = True
             self.app.show("RoomScene")
 
         elif state["ROOM_ACTION_ERROR"]["CREATE_REJECT"]:
+>>>>>>> origin/main
             
             contents = poll_registration("CREATE_REJECT") or {}
             msg = contents.get("MESSAGE") or "Error"
             self.error_label.config(text=msg)
 
             # set error flag back to false
+<<<<<<< HEAD
+            state["ROOM"]["CREATE_REJECT"] = False
+=======
             state["ROOM_ACTION_ERROR"]["CREATE_REJECT"] = False
+>>>>>>> origin/main
             self.on_show()
 
         else:
@@ -481,9 +689,10 @@ class JoinRoomScene(ttk.Frame):
 
         self.rooms_list = tk.Listbox(left, height=10, width=28, exportselection=False)
         self.rooms_list.grid(row=1, column=0, pady=(8, 0))
+        self.rooms_list.configure(font=("Segoe UI", 11), height=12)
         self.rooms_list.bind("<<ListboxSelect>>", self.on_room_select)
         self.rooms_list.bind("<Double-Button-1>", lambda e: self.on_join())
-
+        
         # Details + password (right)
         right = ttk.Frame(content)
         right.grid(row=0, column=1, sticky="n")
@@ -598,7 +807,14 @@ class JoinRoomScene(ttk.Frame):
         if state["IN_ROOM"]:
             print("IN ROOM!")
             # if the in room state becomes true, then we can confirm that the room creation was successful
+<<<<<<< HEAD
+            print("IN ROOM!!!!")
+            self.app.show("RoomScene") # runs when room key wrap type is reached - block something
+
+        elif state["ROOM"]["JOIN_REJECT"]:
+=======
             self.app.show("RoomScene")
+>>>>>>> origin/main
             
         elif state["ROOM_ACTION_ERROR"]["JOIN_REJECT"]:
             
@@ -609,7 +825,11 @@ class JoinRoomScene(ttk.Frame):
             self.error_label.config(text=msg)
 
             # set error flag back to false
+<<<<<<< HEAD
+            state["ROOM"]["JOIN_REJECT"] = False
+=======
             state["ROOM_ACTION_ERROR"]["JOIN_REJECT"] = False
+>>>>>>> origin/main
             self.on_room_select()
 
         else:
@@ -623,6 +843,7 @@ class RoomScene(ttk.Frame):
         self.app = app
 
         self.chat_rooms = {} 
+        self.secure_ready = False
 
         # Polling
         self._polling = False
@@ -657,10 +878,20 @@ class RoomScene(ttk.Frame):
         self.chat_text = tk.Text(self.chat_container, wrap="word", state="disabled")
         self.chat_text.grid(row=0, column=0, sticky="nsew")
 
+        self.chat_text.configure(
+        bg="#111A2E",
+        fg="#E6EAF2",
+        insertbackground="#E6EAF2",
+        relief="flat",
+        padx=12,
+        pady=10,
+        font=("Segoe UI", 11)
+        )
+
         scroll = ttk.Scrollbar(self.chat_container, orient="vertical", command=self.chat_text.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         self.chat_text.configure(yscrollcommand=scroll.set)
-
+        
         self.admin_container = ttk.Frame(self.body)
         self.admin_container.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(20, 0))
         self.admin_container.columnconfigure(0, weight=1)
@@ -676,6 +907,9 @@ class RoomScene(ttk.Frame):
 
         # Start on main view
         self._show_admin_main_view()
+
+        # initially set to false
+        self.room_state = client_encryption.RoomCryptoState(False)
 
         input_frame = ttk.Frame(self)
         input_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(10, 20))
@@ -729,17 +963,20 @@ class RoomScene(ttk.Frame):
 
         self._admin_list = tk.Listbox(self.admin_tools, selectmode="extended")
         self._admin_list.grid(row=2, column=0, sticky="nsew")
+        self._admin_list.configure(font=("Segoe UI", 11), height=12)
 
-        btn_row = ttk.Frame(self.admin_tools)
-        btn_row.grid(row=3, column=0, sticky="e", pady=(10, 10))
+        footer = ttk.Frame(self.admin_tools)
+        footer.grid(row=3, column=0, sticky="ew", pady=(10, 10))
+        footer.columnconfigure(0, weight=1)
+        footer.columnconfigure(1, weight=1)
+        footer.columnconfigure(2, weight=1)
+        footer.columnconfigure(3, weight=1)
 
-        ttk.Button(btn_row, text="Kick", command=lambda: self._admin_action("remove")).grid(row=0, column=0, padx=5)
-        ttk.Button(btn_row, text="Ban", command=lambda: self._admin_action("ban")).grid(row=0, column=1, padx=5)
-        ttk.Button(btn_row, text="Make Admin", command=lambda: self._admin_action("makeadmin")).grid(row=0, column=2, padx=5)
+        ttk.Button(footer, text="Kick", command=lambda: self._admin_action("remove")).grid(row=0, column=0, padx=5, sticky="ew")
+        ttk.Button(footer, text="Ban", command=lambda: self._admin_action("ban")).grid(row=0, column=1, padx=5, sticky="ew")
 
-        ttk.Button(self.admin_tools, text="Back", command=self._show_admin_main_view).grid(
-            row=4, column=0, sticky="w", pady=(0, 10)
-        )
+        ttk.Button(footer, text="Make Admin", command=lambda: self._admin_action("makeadmin")).grid(row=0, column=2, padx=5, sticky="ew")
+        ttk.Button(footer, text="Back", command=self._show_admin_main_view).grid(row=0, column=3, padx=5, sticky="ew")
 
     def _show_admin_main_view(self):
         self.admin_main.tkraise()
@@ -765,20 +1002,37 @@ class RoomScene(ttk.Frame):
 
 
     def on_show(self):
-        """Call this when the app shows this frame."""
-        room = state.get("ROOM") or ""
-        user = state.get("USER") or ""
+        room = state["ROOM"]["ROOM_NAME"] or ""
+        user = state["USER"] or ""
         self.room_label.config(text=f"Room: {room}")
         self.user_label.config(text=f"User: {user}")
 
+<<<<<<< HEAD
+        self.room_state = client_encryption.RoomCryptoState(state["ROOM"]["OWNER"])
+
+        if self.room_state.is_owner:
+
+            self.secure_ready = True
+            self.room_state.ins_as_creator()
+        else:
+            self.secure_ready = False
+            self._append_chat("[YOU]: Establishing room key...")
+
+        # disable send until secure
+        self._set_input_enabled(self.secure_ready)
+        self._set_admin_mode(state["ROOM"]["ADMIN_FLAG"])
+=======
         self._set_input_enabled(bool(state.get("IN_ROOM")))
         self._set_admin_mode()
+>>>>>>> origin/main
 
         if not self._polling:
             self._polling = True
             self.entry.focus_set()
             self._schedule_poll()
 
+<<<<<<< HEAD
+=======
     def on_hide(self):
         self._polling = False
         if self._poll_job is not None:
@@ -788,9 +1042,9 @@ class RoomScene(ttk.Frame):
                 pass
             self._poll_job = None
 
+>>>>>>> origin/main
     def _schedule_poll(self):
         self._poll_job = self.after(10, self._poll_inbox)
-
 
     def _set_input_enabled(self, enabled: bool):
         self.entry.configure(state=("normal" if enabled else "disabled"))
@@ -804,7 +1058,8 @@ class RoomScene(ttk.Frame):
 
 
     def on_send(self, event=None):
-        if not state.get("IN_ROOM"):
+
+        if not state.get("IN_ROOM") or self.room_state.epoch is None:
             return
 
         msg = self.entry.get().strip()
@@ -813,13 +1068,39 @@ class RoomScene(ttk.Frame):
 
         self.entry.delete(0, "end")
 
-        self._append_chat(f"You: {msg}")
+        # discard msgs until secure
+        if not self.secure_ready:
+            return
 
+        # Now safe to send
+        self._append_chat(f"You: {msg}")
         msgtype = "COMMAND" if msg[0] == "!" else "SEND"
-        outbox.put({"TYPE": msgtype, "MESSAGE": msg})
+
+        if state["ROOM"]["ADMIN_FLAG"] and msg == "!leave":
+            self._leave_room()
+            return
+        
+        # do not encrypt the message if its a command
+        if msgtype == "COMMAND":
+            outbox.put({"TYPE": "COMMAND", "MESSAGE": msg})
+            return
+        
+        # encrypt message
+        secure_send = encryption_helper.encrypt_room_msg(
+            self.app.client_crypto.sign_priv,
+            self.room_state.room_key,
+            self.room_state.epoch,
+            self.room_state.send_ctr,
+            msg,
+            state["USER"],
+            msgtype,
+        )
+
+        self.room_state.send_ctr += 1
+        outbox.put(secure_send)
 
     def _refresh_admin_list_from_chat_rooms(self):
-        room_name = state.get("ROOM")
+        room_name = state["ROOM"]["ROOM_NAME"]
         if not room_name:
             return
 
@@ -827,7 +1108,7 @@ class RoomScene(ttk.Frame):
         if not chat_room:
             return
 
-        users = chat_room.users
+        users = chat_room.members
         admins = chat_room.admins
         me = state.get("USER")
 
@@ -836,8 +1117,8 @@ class RoomScene(ttk.Frame):
         for u in users:
             if u == me or u in admins:
                 continue
-
-            #  mark admins
+            
+            # no actions can be performed on an admin
             self._admin_list.insert("end", u)
 
     def _get_selected_users(self):
@@ -857,63 +1138,151 @@ class RoomScene(ttk.Frame):
         self._append_chat(f"[ADMIN] Sent {action_type} for: {', '.join(users)}")
 
     def _leave_room(self):
+        
+        # do not encrypt leave message
         outbox.put({"TYPE": "COMMAND", "MESSAGE": "!leave"})
+<<<<<<< HEAD
+        state["ROOM"]["ADMIN_FLAG"] = False
+        state["ROOM"]["OWNER"] = False
+=======
         self._is_admin = False
+>>>>>>> origin/main
         self._set_input_enabled(False)
         self._set_admin_mode()
         # return to connected scene
 
+    def handle_decrypt(self, msg):
+        if msg["EPOCH"] != self.room_state.epoch:
+            print(f"SENDER EPOCH: {msg["EPOCH"]} - YOUR EPOCH: {self.room_state.epoch}")
+            self._schedule_poll()
+            return
+        
+        decrypted_msg = encryption_helper.decrypt_room_message(
+                self.room_state.room_key,
+                msg,
+                self.room_state.recv_ctr,
+            )
+        
+        self._append_chat(f"{msg["FROM"]}: {decrypted_msg}")
+        
     def _poll_inbox(self):
         if not self._polling or not state.get("RUNNING"):
             return
-        
+
         try:
-            msg = local.get(timeout=.01)
+            msg = local.get_nowait()
         except queue.Empty:
             self._schedule_poll()
             return
 
-        if not msg:
-            state["RUNNING"] = False
-            self._append_chat("[SERVER] Disconnected.")
-            self._set_input_enabled(False)
-            self._polling = False
-            return
-
         mtype = msg.get("TYPE")
 
-        if mtype == "RECEIVE":
-            frm = msg.get("FROM", "?")
-            text = msg.get("MESSAGE", "")
-            self._append_chat(f"{frm}: {text}")
+        # check for room key flag
+        if state["ROOM"]["ROTATE_FLAG"]:
+             
+            self.secure_ready = False
+
+            if mtype not in ("ROOM_KEY_WRAP", "SEND"):
+                # DISCARD IF SEND MESSAGE, -> OUTDATED
+                local.put(msg)
+            
+            elif mtype == "ROOM_KEY_WRAP":
+
+                # Process ROOM_KEY_WRAP
+                result = encryption_helper.receiver_handle_key_wrap(
+                    msg,
+                    self.app.client_crypto.dh_priv
+                    )
+                self.room_state.ins_as_joiner()
+
+                self.room_state.set_room_key(result["ROOM_KEY"])
+                self.room_state.epoch = result["EPOCH"]
+                self.room_state.send_ctr = 0
+                self.room_state.recv_ctr.clear()
+
+                self.secure_ready = True
+
+                self._set_input_enabled(True)
+
+                state["ROOM"]["ROTATE_FLAG"] = False
+                self._append_chat("[PYOU]: Established new room key!")
+
+            self._schedule_poll()
+            return
+
+        if mtype == "SEND": # receiving type SEND message
+            # encrypted
+            self.handle_decrypt(msg)
 
         elif mtype == "BROADCAST":
-            text = msg.get("MESSAGE", "")
-            self._append_chat(f"[BROADCAST] {text}")
+            # not encrypted
+            self._append_chat(f"[BROADCAST] {msg.get("MESSAGE")}")
 
         elif mtype == "REJOIN":
+            # not encrypted
             text = msg.get("MESSAGE", "")
             self._append_chat(f"[BROADCAST] {text}")
             self._set_input_enabled(False)
             self._polling = False
+<<<<<<< HEAD
+            state["ROOM"]["ADMIN_FLAG"] = False
+=======
             self._is_admin = False
+>>>>>>> origin/main
             self.app.rejoin()
             return
 
         elif mtype == "ADMIN":
+<<<<<<< HEAD
+            # not encrypted
+            state["ROOM"]["ADMIN_FLAG"] = True
+            self._set_admin_mode(True)
+=======
             # promote current user to admin
             self._is_admin = True
             self._set_admin_mode()
+>>>>>>> origin/main
 
         elif mtype == "RELOAD":
+            # not encrypted
             self.chat_rooms = msg.get("CHAT_ROOMS") or self.chat_rooms
-
-            # After updating chat_rooms, refresh embedded admin list
-            self.chat_room = self.chat_rooms.get(state["ROOM"])
+            self.chat_room = self.chat_rooms.get(state["ROOM"]["ROOM_NAME"])
             self._refresh_admin_list_from_chat_rooms()
 
-        self._schedule_poll()
+        elif mtype == "OWNER":
+            # not encrypted
+            self.room_state.is_owner = True
+            self.room_state.rotate_key()
+            state["ROOM"]["OWNER"] = True
 
+        elif self.room_state.is_owner:
+            
+            # JOIN was replaced with ROTATE - will be called once someone joins, leaves, or rotates owner
+            if mtype == "ROTATE":
+                
+                self.room_state.epoch = self.room_state.epoch + 1 if self.room_state.epoch else 0
+                self.room_state.send_ctr = 0
+                self.room_state.recv_ctr.clear()
+
+                new_room_key, wraps = encryption_helper.rotate_room_key(
+                    state["USER"],
+                    self.app.client_crypto.sign_priv,
+                    msg.get("PUBKEY_DIR"),
+                    msg.get("CHAT_ROOM"),
+                    self.room_state.epoch,
+                )
+            
+                self.room_state.set_room_key(new_room_key)
+ 
+                # send wrapped room key to everyone else
+                for wrap in wraps:
+                    outbox.put(wrap)
+
+                if msg["JOIN"]:
+                    # send broadcast join message to relay server
+                    outbox.put({"TYPE": "BROADCAST", "MESSAGE": f"Welcome to the chat room, {msg["USER"]}"})
+
+        self._schedule_poll()
 
 def main():
     # Create a TCP/IP socket, connect to the VPS IP address
@@ -927,7 +1296,7 @@ def main():
     rec_thread.start()
     outbx_thread.start()
     process_inbox_thread.start()
-
+    
     app = ChatGUI()
     app.mainloop()
 
