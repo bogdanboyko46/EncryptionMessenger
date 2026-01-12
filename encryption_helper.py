@@ -96,7 +96,6 @@ def owner_handle_key_wrap(msg, owner_sign_priv, room_key, from_name, epoch):
     # get the private room key
     payload = room_key
 
-    print(f"99 EPOCH: {epoch}")
     aad_dict = {
         "TYPE": "ROOM_KEY_WRAP",
         "TO": msg.get("NAME"),
@@ -105,13 +104,12 @@ def owner_handle_key_wrap(msg, owner_sign_priv, room_key, from_name, epoch):
         "EPOCH": epoch,
         }
 
-        # convert context into bytes and obtain the session key
+    # convert context into bytes and obtain the session key
     aad_bytes = aad(aad_dict)
     secret_key = eph_session_key(eph_dh_priv, joiner_dh_pub)
         
     # get the wrapped key
     wrap_key = hkdf(secret_key, aad_bytes)
-    print(f"113 EPOCH: {aad_dict["EPOCH"]}")
     # get the NONCE and cipher text from the wrap key and context
 
     NONCE, CIPHERTEXT = aead_encrypt(
@@ -124,10 +122,9 @@ def owner_handle_key_wrap(msg, owner_sign_priv, room_key, from_name, epoch):
     wrap_msg["NONCE"] = NONCE
     wrap_msg["CIPHERTEXT"] = CIPHERTEXT
 
-    # sign_bytes = sign(owner_sign_priv, aad(wrap_msg))
-    # wrap_msg["SIG"] = sign_bytes
+    sign_bytes = sign(owner_sign_priv, aad(wrap_msg))
+    wrap_msg["SIG"] = sign_bytes
     
-    print(f"129 EPOCH: {aad_dict["EPOCH"]}")
     return wrap_msg
 
 def receiver_handle_key_wrap(msg, receiver_dh_priv):
@@ -141,7 +138,6 @@ def receiver_handle_key_wrap(msg, receiver_dh_priv):
     owner_sign_pub = bytes_to_sign_pub(owner_sign_pub_bytes)
 
     # Verify signature over exactly what sender signed
-    """"
     signed_part = {
         "TYPE": msg["TYPE"],
         "TO": msg["TO"],
@@ -153,8 +149,8 @@ def receiver_handle_key_wrap(msg, receiver_dh_priv):
     }
 
     # verify sender sig
-    owner_sign_pub.verify(msg["SIG"], aad(signed_part))
-    """
+    verify(owner_sign_pub, msg["SIG"], aad(signed_part))
+
     eph_pub = bytes_to_dh_pub(msg["EPH_PUB"])
     shared = receiver_dh_priv.exchange(eph_pub)
 
@@ -165,6 +161,7 @@ def receiver_handle_key_wrap(msg, receiver_dh_priv):
         "EPH_PUB": msg["EPH_PUB"],
         "EPOCH": msg["EPOCH"],
     }
+
     # convert the context into bytes, then use the hkdf function to get the wrap key
     aad_bytes = aad(wrap_header)
     wrap_key = hkdf(shared, aad_bytes)
@@ -211,22 +208,23 @@ def encrypt_room_msg(sender_sign_priv, room_key, epoch, send_ctr, message, from_
     # encrypt
     ct = AESGCM(msg_key).encrypt(nonce, payload, aad_bytes)
 
-    wrap_msg = {
-        "TYPE": msg_type,
-        "EPOCH": epoch,
-        "CTR": send_ctr,
-        "FROM": from_user,
-        "NONCE": nonce,
-        "CIPHERTEXT": ct,
+    signed_part = {
+    "TYPE": msg_type,
+    "EPOCH": epoch,
+    "CTR": send_ctr,
+    "FROM": from_user,
+    "NONCE": nonce,
+    "CIPHERTEXT": ct,
     }
+    
+    sig = sign(sender_sign_priv, aad(signed_part))
 
-    # sign_bytes = sign(sender_sign_priv, aad(wrap_msg))
-    # wrap_msg["SIG"] = sign_bytes
-
+    wrap_msg = dict(signed_part)
+    wrap_msg["SIG"] = sig
     return wrap_msg
 
 
-def decrypt_room_message(receiver_sign_pub, room_key, msg, recv_ctr):
+def decrypt_room_message(room_key, msg, recv_ctr):
     sender = msg["FROM"]
     epoch = msg["EPOCH"]
     ctr = msg["CTR"]
@@ -236,7 +234,6 @@ def decrypt_room_message(receiver_sign_pub, room_key, msg, recv_ctr):
         raise ValueError(f"Out of order ctr - from {sender}: ctr={ctr} last={last}")
 
     # verify the material
-    """
     signed_part = {
         "TYPE": msg["TYPE"],
         "EPOCH": epoch,
@@ -245,10 +242,12 @@ def decrypt_room_message(receiver_sign_pub, room_key, msg, recv_ctr):
         "NONCE": msg["NONCE"],
         "CIPHERTEXT": msg["CIPHERTEXT"],
     }
-    """
+
+    pubkey_dir = msg["PUBKEY_DIR"]
 
     # verify that material comes from the actual sender!
-    # receiver_sign_pub.verify(msg["SIG"], aad(signed_part))
+    sender_sign_pub = bytes_to_sign_pub(pubkey_dir[sender]["sign_pub"])
+    verify(sender_sign_pub, msg["SIG"], aad(signed_part))
 
     # derive sender key - exact contents and format
     info_bytes = aad({

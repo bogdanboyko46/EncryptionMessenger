@@ -149,6 +149,7 @@ def handle_client(conn, addr):
                 case "SEND":
                     # message is encrypted, route the message to the users in the chat room
                     print("CIPHER TEXT: ",msg["CIPHERTEXT"])
+                    msg["PUBKEY_DIR"] = pubkey_dir
                     chat_rooms[chat_room_name].handle_normal_message(msg, clients)
                 
                 case "COMMAND":

@@ -96,6 +96,7 @@ class chat_room:
             # admin commands
             if from_user in self.admins:
                 
+                print("INSIDE COMMAND ADMINS!!!!")
                 user = msglist[1] if len(msglist) > 1 else None
 
                 match command:
@@ -135,9 +136,11 @@ class chat_room:
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": self.ban_list})
 
             # base commands
+
+            print(f"ABOUT TO ENTER COMMAND WOARLDF FOR COMMAND ({command})")
             match command:
                 # returns what type of role the user has (admin / guest)
-                
+        
                 case "!role":
                     
                     if from_user in self.admins:
@@ -147,48 +150,31 @@ class chat_room:
 
                 case "!leave":
                         
-                        self.members.remove(from_user)
+                        was_owner = (from_user == self.get_owner())
 
+                        if from_user in self.members:
+                            self.members.remove(from_user)
                         if from_user in self.admins:
-
                             self.admins.remove(from_user)
 
-                            # the first user in the list becomes admin if admin leaves
-                            if len(self.admins) == 0 and len(self.members) > 0:
-                                self.admins.append(self.members[0])
+                        if not self.members and chat_rooms:
+                            del chat_rooms[self.room_name]
 
-                                # send admin msg to user - update's user scene
-                                to_socket = clients[self.admins[0]].get_socket()
-                                send_message(to_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made an admin by an existing admin."})
-                                send_message(to_socket, {"TYPE": "ADMIN"})
-                            
-                            # if the user that left was owner, promote the oldest admin to owner
+                        if not self.admins and self.members:
+                            self.admins.append(self.members[0])
+                            to_socket = clients[self.members[0]].get_socket()
+                            send_message(to_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made an admin by an existing admin."})
+                            send_message(to_socket, {"TYPE": "ADMIN"})
 
-                        if len(self.members) == 0:
-                            # the only user will be an admin, so delete room
-
-                            # loop thru clients and remove the room in their history
-                            for client in clients.values():
-                                if self.room_name in client.room_history:
-                                
-                                    client.delete_room_history(self.room_name)
-                                    
-                            if chat_rooms:
-                                # delete room from server and unassign user from room
-                                del chat_rooms[self.room_name]
-                                return
-                    
-                        else:
-                            
-                            if from_user == self.get_owner():
-
-                                send_message(clients[self.admins[0]].get_socket(), {"TYPE": "OWNER"})
-
-                            self.handle_command("BROADCAST", f"{from_user} has left the room.", clients)
-
-                        send_message(clients[from_user].get_socket(), {"TYPE": "REJOIN", "MESSAGE": "You have left the room."})
-                        # message to the rest of the users that the user has left
+                        if was_owner and self.admins:
+                            new_owner = self.admins[0]
+                            to_socket = clients[new_owner].get_socket()
+                            send_message(to_socket, {"TYPE": "BROADCAST", "MESSAGE": "You have been made owner!"})
+                            send_message(to_socket, {"TYPE": "OWNER"})
                         
+                        self.handle_command("BROADCAST", f"{from_user} has left the room. Rotating keys.", clients)
+                        # send rejoin message to the one who left
+                        send_message(clients[from_user].get_socket(), {"TYPE": "REJOIN", "MESSAGE": "You have left the room."})
                 case "!roomname":
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": f"The room name is: {self.room_name}"})
                 case "!help":
@@ -214,8 +200,9 @@ class chat_room:
                 case "!admins":
                         send_message(clients[from_user].get_socket(), {"TYPE": "BROADCAST", "MESSAGE": self.admins})
                 
-            if mem_count != len(self.members) and chat_rooms:
+            if mem_count > len(self.members) and len(self.members) > 0 and chat_rooms:
                 # member count has changed, send owner type rotate key message
+                print("ROTATING NOW! SENDING TO ",self.get_owner())
                 send_message(clients[self.get_owner()].get_socket(), {"TYPE": "ROTATE", "CHAT_ROOM": chat_rooms[self.room_name], "PUBKEY_DIR": pubkey_dir})
 
         else:
