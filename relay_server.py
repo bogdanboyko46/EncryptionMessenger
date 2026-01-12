@@ -4,7 +4,7 @@ import socket
 import threading
 from chat_room import chat_room
 from protocol import send_message, recv_message
-from client_info import Client
+from client_obj import Client
 
 HOST = "0.0.0.0"   # Listen on all network interfaces
 PORT = 5000        # Port clients will connect to
@@ -14,6 +14,7 @@ chat_rooms = dict()  # Dictionary to hold chat room instances, maps room name ->
 pubkey_dir = dict() # username -> record
 lock = threading.Lock()
 
+<<<<<<< HEAD
 def create_room(room_name, owner, password=None):
     # create a new chat_room obj and assign respective room name to room object
 
@@ -98,6 +99,18 @@ def establish_connection(conn):
         send_message(conn, {"TYPE":"ERROR","MESSAGE":"Expected PUBKEYS registration"})
         conn.close()
         return None
+=======
+def establish_connection(conn):
+    msg = recv_message(conn)
+
+    # recieves the name from the client
+    if not msg:
+        send_message(conn, {"TYPE": "ERROR", "MESSAGE": "Message was null!"})
+        conn.close()
+        return
+    
+    name = msg.get("NAME")
+>>>>>>> origin/main
 
     name = msg.get("NAME")
     if not name:
@@ -133,11 +146,107 @@ def handle_client(conn, addr):
     if name is None:
         return
 
+<<<<<<< HEAD
     chat_room_name = None
 
+=======
+    # send message with chat_room info
+    send_message(conn, {"TYPE": "REGISTRATION", "CHAT_ROOMS": chat_rooms, "MESSAGE": f"Welcome to the chat room server, {name}!"})
+
+    # receives msg for room assignment
+    # assigns the client as a key - value pair in the clients dict
+    client_obj = Client(conn, name)
+    clients[name] = client_obj
+
+    return name
+
+
+def create_room(room_name, owner, conn, password=None):
+    # create a new chat_room obj and assign respective room name to room object
+
+    # check to see if the room already exists
+    if room_name in chat_rooms:
+        send_message(conn, {"TYPE": "CREATE_REJECT", "MESSAGE": "Room already exists!"})
+        return False
+    
+    temp_room = chat_room(room_name, owner, password)
+    chat_rooms[room_name] = temp_room
+
+    return True
+
+def join_room(room_name, name, chat_rooms, conn, password=None):
+
+    if room_name not in chat_rooms.keys() or name in chat_rooms[room_name].ban_list:
+        send_message(conn, {"TYPE": "JOIN_REJECT", "CHAT_ROOMS": chat_rooms, "MESSAGE": "Room does not exist or you are banned from it!"})
+        return False
+    
+    room = chat_rooms.get(room_name)
+        
+    if not room:
+        return False
+        
+    if room.has_password:
+
+        room.add_user(name, conn, password)
+
+        if not name in room.users:
+            return False
+        
+    else:
+
+        print("ADDED USER!")
+        room.add_user(name)
+
+    return True
+
+# the computation for assigning a user to a room, prompts user to join or create one
+def assign_room(conn, name, msg):
+    room_name = msg["ROOM_NAME"] if msg else None
+
+    # handles whether the client wants to join or create a room
+    if msg and msg.get("TYPE") == "CREATE_ROOM":
+        
+        # if a room was not able to be created, we return and do not create new room
+        if not create_room(room_name, name, msg.get("PASSWORD")):
+            return
+
+    elif msg and msg.get("TYPE") == "JOIN_ROOM":
+        
+        print("LINE 96, ATTEMPTING TO JOIN ROOM!")
+        if not join_room(room_name, name, chat_rooms, conn, password=msg.get("PASSWORD")):
+
+            print("FAILED TO JOIN ROOM!")
+            return
+
+    print("CONNECTED, SENDING CONNECT MESSAGE!")
+    chat_rooms[room_name].broadcast(clients, name)
+    send_message(conn, {"TYPE": "CONNECTED", "CHAT_ROOMS": chat_rooms, "ROOM_NAME": room_name})
+
+    print("SENT CONNECTED MESSAGE!")
+    # add room to room history - has access to client_obj file -> client needs to do this themselves -> more privacy
+    if room_name not in clients[name].room_history:
+        clients[name].add_room_history(room_name)
+
+    print("RETURNING NAME!")
+    return room_name
+
+# Every client thats connected to the relay server will have an instance of this (the instance is hosted here ofc)
+def handle_client(conn, addr):
+    # prints the ip address of the client that connects to the relay
+    print(f"[+] Connected: {addr}")
+
+    chat_room_name = None
+
+    name = establish_connection(conn)
+
+>>>>>>> origin/main
     try:
         while True:
             msg = recv_message(conn)
+<<<<<<< HEAD
+=======
+            
+>>>>>>> origin/main
             if msg is None:
                 break
 
@@ -147,11 +256,22 @@ def handle_client(conn, addr):
                 chat_room_name = assign_room(conn, name, msg)
 
             match mType:
+<<<<<<< HEAD
                 case "SEND":
                     # message is encrypted, route the message to the users in the chat room
                     print("CIPHER TEXT: ",msg["CIPHERTEXT"])
                     msg["PUBKEY_DIR"] = pubkey_dir
                     chat_rooms[chat_room_name].handle_normal_message(msg, clients)
+=======
+                case "SEND" | "COMMAND":
+                    # operation for a user sending a message to the room they are in
+                    message = msg.get("MESSAGE")
+
+                    type = mType if mType == "COMMAND" else "RECEIVE"
+
+                    if chat_room_name in chat_rooms:
+                        chat_rooms[chat_room_name].send_message(type, message, clients, from_user=name, chat_rooms=chat_rooms)
+>>>>>>> origin/main
                 
                 case "COMMAND":
                     
@@ -215,9 +335,15 @@ def handle_client(conn, addr):
                     room.handle_command("BROADCAST", f"{name} has left the room.", clients, from_user=name)
 
                 # deleted rooms are wiped from a clients history
+<<<<<<< HEAD
                 # for room in user_room_history:
                     # if name in chat_rooms[room].ban_list:
                         # chat_rooms[room].ban_list.remove(name)
+=======
+                for room in chat_rooms[name].user_room_history:
+                    if name in chat_rooms[room].ban_list:
+                        chat_rooms[room].ban_list.remove(name)
+>>>>>>> origin/main
 
                 if len(chat_rooms[chat_room_name].members) == 0:
                     del chat_rooms[chat_room_name]

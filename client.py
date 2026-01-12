@@ -11,12 +11,15 @@ import encryption_helper
 from tkinter import ttk
 from protocol import send_message, recv_message
 from tkinter import font
+from client_obj import Client
 
 state = {
+
     "RUNNING": True,
     "IN_ROOM": False,
     "USER": None, 
 
+<<<<<<< HEAD
     "ROOM": {
         "ROOM_NAME": None,
         "ADMIN_FLAG": False,
@@ -27,6 +30,11 @@ state = {
         "OWNER": False,
 
         "ROTATE_FLAG": False,
+=======
+    "ROOM_ACTION_ERROR": {
+        "JOIN_REJECT": False,
+        "CREATE_REJECT": False,
+>>>>>>> origin/main
     },
 }
 
@@ -42,6 +50,7 @@ def recieving_thread(s):
         # in the case of a null msg sent to socket
         
         if msg is None:
+            print("MESSAGE IS NONE!")
             print("Disconnected from server.")
             state["RUNNING"] = False
             s.close()
@@ -67,8 +76,13 @@ def outbox_thread(s):
         # invalid contents if condition passes; either null or contains nothing
         if contents is None or not contents:
             continue
+<<<<<<< HEAD
         
         # print(f"SENDING {contents}")
+=======
+
+        print(f"SENDING {contents}")
+>>>>>>> origin/main
         # else, we send the contents to the relay server
         send_message(s, contents)
 
@@ -83,6 +97,7 @@ def process_inbox(s):
             # gets the type of the message
             mType = msg.get("TYPE")
 
+            print(f"PROCESSING MSG {msg}")
             match mType:
                 
                 # message type that indicates a logic error
@@ -123,6 +138,7 @@ def process_inbox(s):
                 case "JOIN_REJECT" | "CREATE_REJECT":
                     # set error flag to true
                     
+<<<<<<< HEAD
                     state["ROOM"][mType] = True
                     local.put(msg)
 
@@ -136,6 +152,9 @@ def process_inbox(s):
                 case "ROOM_KEY_WRAP":
                     state["ROOM"]["ROTATE_FLAG"] = True
                     
+=======
+                    state["ROOM_ACTION_ERROR"][mType] = True
+>>>>>>> origin/main
                     local.put(msg)
 
         except queue.Empty:
@@ -163,6 +182,7 @@ def poll_registration(expected_type):
         stash.append(msg)
         
 class ChatGUI(tk.Tk):
+<<<<<<< HEAD
 
     def __init__(self):
         super().__init__()
@@ -171,6 +191,11 @@ class ChatGUI(tk.Tk):
          # generate necessary client crypto obj
         self.client_crypto = client_encryption.ClientCrypto()
 
+=======
+    def __init__(self):
+        super().__init__()
+        
+>>>>>>> origin/main
         self.title("Chat Room Messenger")
         self.geometry("975x550")
 
@@ -443,6 +468,7 @@ class ConnectedScene(ttk.Frame):
         reload_btn.place(relx=1.0, rely=0.0, x=-12, y=12, anchor="ne")
 
     def on_show(self):
+<<<<<<< HEAD
 
         outbox.put({
             "TYPE": "PUBKEYS",
@@ -450,6 +476,10 @@ class ConnectedScene(ttk.Frame):
             "SIGN_PUB": encryption_helper.sign_pub_bytes(self.app.client_crypto.sign_pub),
             "DH_PUB": encryption_helper.dh_pub_bytes(self.app.client_crypto.dh_pub),
             })
+=======
+        # create client obj
+        outbox.put({"NAME": state["USER"]})
+>>>>>>> origin/main
         
         self.welcome_label.config(text="Connecting...")
         for w in self.content_frame.winfo_children():
@@ -601,19 +631,30 @@ class CreateRoomScene(ttk.Frame):
     def wait_for_room_connect(self):
         if state["IN_ROOM"]:
             # if the in room state becomes true, then we can confirm that the room creation was successful
+<<<<<<< HEAD
             state["ROOM"]["ADMIN_FLAG"] = True
             state["ROOM"]["OWNER"] = True
             
             self.app.show("RoomScene")
 
         elif state["ROOM"]["CREATE_REJECT"]:
+=======
+            self.app.frame.get("RoomScene")._is_admin = True
+            self.app.show("RoomScene")
+
+        elif state["ROOM_ACTION_ERROR"]["CREATE_REJECT"]:
+>>>>>>> origin/main
             
             contents = poll_registration("CREATE_REJECT") or {}
             msg = contents.get("MESSAGE") or "Error"
             self.error_label.config(text=msg)
 
             # set error flag back to false
+<<<<<<< HEAD
             state["ROOM"]["CREATE_REJECT"] = False
+=======
+            state["ROOM_ACTION_ERROR"]["CREATE_REJECT"] = False
+>>>>>>> origin/main
             self.on_show()
 
         else:
@@ -710,6 +751,7 @@ class JoinRoomScene(ttk.Frame):
             self.join_btn.config(state="normal")
 
     def on_room_select(self, event=None):
+        print("543")
         idxs = self.rooms_list.curselection()
         if not idxs:
             return
@@ -732,6 +774,7 @@ class JoinRoomScene(ttk.Frame):
         )
 
         # If no password, clear it and focus join button; otherwise focus password entry
+        print("565")
         self.pass_entry.delete(0, "end")
         if has_pw:
             self.pass_entry.focus_set()
@@ -739,6 +782,7 @@ class JoinRoomScene(ttk.Frame):
             self.join_btn.focus_set()
 
     def on_join(self):
+        print("ON JOIN!")
         if not self.selected_room:
             self.error_label.config(text="Select a room first.")
             return
@@ -761,21 +805,35 @@ class JoinRoomScene(ttk.Frame):
     def wait_for_room_connect(self):
 
         if state["IN_ROOM"]:
+            print("IN ROOM!")
             # if the in room state becomes true, then we can confirm that the room creation was successful
+<<<<<<< HEAD
             print("IN ROOM!!!!")
             self.app.show("RoomScene") # runs when room key wrap type is reached - block something
 
         elif state["ROOM"]["JOIN_REJECT"]:
+=======
+            self.app.show("RoomScene")
+>>>>>>> origin/main
             
+        elif state["ROOM_ACTION_ERROR"]["JOIN_REJECT"]:
+            
+            print("ROOM ERROR JOIN REJECT!")
+
             contents = poll_registration("JOIN_REJECT") or {}
             msg = contents.get("MESSAGE") or "Error"
             self.error_label.config(text=msg)
 
             # set error flag back to false
+<<<<<<< HEAD
             state["ROOM"]["JOIN_REJECT"] = False
+=======
+            state["ROOM_ACTION_ERROR"]["JOIN_REJECT"] = False
+>>>>>>> origin/main
             self.on_room_select()
 
         else:
+            print("LOOP")
             self.after(5, self.wait_for_room_connect)
         
 class RoomScene(ttk.Frame):
@@ -790,6 +848,7 @@ class RoomScene(ttk.Frame):
         # Polling
         self._polling = False
         self._poll_job = None
+        self._is_admin = False
 
         # Root grid: header row removed in favor of left header inside body
         self.columnconfigure(0, weight=1)
@@ -864,7 +923,7 @@ class RoomScene(ttk.Frame):
         self.send_btn.grid(row=0, column=1, padx=(10, 0))
 
         # Start in normal mode until on_show() runs
-        self._set_admin_mode(False)
+        self._set_admin_mode()
 
 
     def _build_admin_main_view(self):
@@ -929,12 +988,12 @@ class RoomScene(ttk.Frame):
         self._refresh_admin_list_from_chat_rooms()
         self.admin_tools.tkraise()
 
-    def _set_admin_mode(self, is_admin):
+    def _set_admin_mode(self):
         """
         If admin: show right panel; chat stays in left column only.
         If not admin: hide right panel and let chat span across both columns.
         """
-        if is_admin:
+        if self._is_admin:
             self.admin_container.grid()  # show
             self.chat_container.grid_configure(columnspan=1)
         else:
@@ -948,6 +1007,7 @@ class RoomScene(ttk.Frame):
         self.room_label.config(text=f"Room: {room}")
         self.user_label.config(text=f"User: {user}")
 
+<<<<<<< HEAD
         self.room_state = client_encryption.RoomCryptoState(state["ROOM"]["OWNER"])
 
         if self.room_state.is_owner:
@@ -961,12 +1021,28 @@ class RoomScene(ttk.Frame):
         # disable send until secure
         self._set_input_enabled(self.secure_ready)
         self._set_admin_mode(state["ROOM"]["ADMIN_FLAG"])
+=======
+        self._set_input_enabled(bool(state.get("IN_ROOM")))
+        self._set_admin_mode()
+>>>>>>> origin/main
 
         if not self._polling:
             self._polling = True
             self.entry.focus_set()
             self._schedule_poll()
 
+<<<<<<< HEAD
+=======
+    def on_hide(self):
+        self._polling = False
+        if self._poll_job is not None:
+            try:
+                self.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
+
+>>>>>>> origin/main
     def _schedule_poll(self):
         self._poll_job = self.after(10, self._poll_inbox)
 
@@ -1065,10 +1141,14 @@ class RoomScene(ttk.Frame):
         
         # do not encrypt leave message
         outbox.put({"TYPE": "COMMAND", "MESSAGE": "!leave"})
+<<<<<<< HEAD
         state["ROOM"]["ADMIN_FLAG"] = False
         state["ROOM"]["OWNER"] = False
+=======
+        self._is_admin = False
+>>>>>>> origin/main
         self._set_input_enabled(False)
-        self._set_admin_mode(False)
+        self._set_admin_mode()
         # return to connected scene
 
     def handle_decrypt(self, msg):
@@ -1144,14 +1224,24 @@ class RoomScene(ttk.Frame):
             self._append_chat(f"[BROADCAST] {text}")
             self._set_input_enabled(False)
             self._polling = False
+<<<<<<< HEAD
             state["ROOM"]["ADMIN_FLAG"] = False
+=======
+            self._is_admin = False
+>>>>>>> origin/main
             self.app.rejoin()
             return
 
         elif mtype == "ADMIN":
+<<<<<<< HEAD
             # not encrypted
             state["ROOM"]["ADMIN_FLAG"] = True
             self._set_admin_mode(True)
+=======
+            # promote current user to admin
+            self._is_admin = True
+            self._set_admin_mode()
+>>>>>>> origin/main
 
         elif mtype == "RELOAD":
             # not encrypted
@@ -1195,7 +1285,7 @@ class RoomScene(ttk.Frame):
         self._schedule_poll()
 
 def main():
-    # Create a TCP/IP socket, connect to the VPS IP address & port
+    # Create a TCP/IP socket, connect to the VPS IP address
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect(("72.62.81.113", 5000))
      

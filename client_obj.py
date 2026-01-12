@@ -4,6 +4,7 @@ class Client:
         self.socket = socket
         self.user_name = user_name
         self.room_history = []
+        self.pinned_keys = dict() # stores receiving user name -> "sign_pub": {sign_pub}, "ex_pub" = {ex_pub}
 
     def get_name(self):
         return self.user_name
