@@ -1,6 +1,6 @@
 An overview of the AES-GCM encrypted chat room. Before running the program, please install cryptography using **pip install cryptography** in the cmd.
 
-User Bob connects to the server. Creates a room called *room23*
+User Bob connects to the server. Bob creates a room called *room23*
 ![BOB1-ezgif com-video-to-gif-converter](https://github.com/user-attachments/assets/48cf211a-99f5-45bb-a9fd-d33c3d923d88)
 
 User Alice connects to the server and joins the room created by Bob.
